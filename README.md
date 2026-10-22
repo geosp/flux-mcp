@@ -32,6 +32,21 @@ Labs' Qwen3.5-9B prompt upsampler. Turn it off only when the client writes a com
 Limits (configurable): sides 256–4096 px (rounded to multiples of 16), up to 4 images per call,
 prompts up to 4000 characters, edit inputs up to 20 MB, 300 s per call.
 
+## Uploading your own images
+
+Tools take image ids, so upload an image first and use the returned id:
+
+```bash
+curl -H "Authorization: Bearer $FLUX_MCP_TOKEN" -F file=@photo.jpg http://10.0.0.96:8300/upload
+# {"id": "1329da32…", "url": "http://10.0.0.96:8300/images/1329da32….png", "width": 1776, "height": 1184}
+```
+
+Agents with a shell (Claude Code, Cline, opencode) can run this themselves; the server's
+instructions tell them how. In a browser, open `http://10.0.0.96:8300/upload`, paste the token,
+and drop images to get their ids. Images pasted into a chat cannot be forwarded to a tool: the
+model only receives them, it cannot hand the bytes on. Uploads are limited to
+`FLUX_MAX_INPUT_BYTES` (20 MB) and stored as PNG.
+
 ## Models
 
 The weights are in the gated repo

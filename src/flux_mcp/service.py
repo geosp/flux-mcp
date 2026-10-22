@@ -2,7 +2,8 @@
 MCP service for flux-mcp
 
 Builds the ComfyUI client, workflows and image store, registers the tools
-from features/*/tool.py and serves stored images at /images/<id>.png.
+from features/*/tool.py, serves stored images at /images/<id>.png and accepts
+uploads at /upload (POST, or GET for a browser form).
 """
 
 import importlib
@@ -13,9 +14,17 @@ from pathlib import Path
 import httpx
 from fastmcp import FastMCP
 from mcp_service_kit import BaseService
+from PIL import Image, UnidentifiedImageError
 from starlette.requests import Request
-from starlette.responses import FileResponse, PlainTextResponse, Response
+from starlette.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    Response,
+)
 
+from .auth import bearer_token, token_matches
 from .comfy_client import ComfyClient
 from .config import AppConfig
 from .flux_service import FluxService
@@ -77,6 +86,8 @@ class FluxMCPService(BaseService):
             logger.info(f"Registered tool from feature: {feature_name}")
 
         store = self.flux.store
+        max_bytes = self.config.flux.max_input_bytes
+        upload_page = (Path(__file__).parent / "upload_page.html").read_text()
 
         @mcp.custom_route("/images/{name}", methods=["GET"], include_in_schema=False)
         async def get_image(request: Request) -> Response:
@@ -84,3 +95,40 @@ class FluxMCPService(BaseService):
             if path is None:
                 return PlainTextResponse("Not found", status_code=404)
             return FileResponse(path, media_type="image/png")
+
+        @mcp.custom_route("/upload", methods=["GET"], include_in_schema=False)
+        async def upload_form(request: Request) -> Response:
+            return HTMLResponse(upload_page)
+
+        @mcp.custom_route("/upload", methods=["POST"], include_in_schema=False)
+        async def upload(request: Request) -> Response:
+            # FastMCP's auth covers /mcp only, so custom routes check the token themselves
+            if not self._authorized(request):
+                return JSONResponse({"error": "missing or invalid bearer token"}, status_code=401,
+                                    headers={"WWW-Authenticate": "Bearer"})
+            too_large = JSONResponse({"error": f"file is larger than {max_bytes} bytes"},
+                                     status_code=413)
+            if int(request.headers.get("content-length") or 0) > max_bytes + 64 * 1024:
+                return too_large
+            async with request.form(max_files=1, max_fields=0) as form:
+                file = form.get("file")
+                if file is None or isinstance(file, str):
+                    return JSONResponse({"error": "send the image as multipart field 'file'"},
+                                        status_code=400)
+                if file.size is not None and file.size > max_bytes:
+                    return too_large
+                data = await file.read()
+            try:
+                stored = store.save(data)
+            except (UnidentifiedImageError, Image.DecompressionBombError):
+                return JSONResponse({"error": "the file is not a readable image"}, status_code=400)
+            logger.info(f"Stored upload {stored.id} ({stored.width}x{stored.height})")
+            return JSONResponse({"id": stored.id, "url": stored.url,
+                                 "width": stored.width, "height": stored.height})
+
+    def _authorized(self, request: Request) -> bool:
+        server, token = self.config.server, self.config.flux.mcp_token
+        if not (server.transport == "http" and server.auth_enabled):
+            return True
+        given = bearer_token(request.headers.get("authorization"))
+        return token is not None and given is not None and token_matches(token, given)

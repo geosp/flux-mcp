@@ -4,7 +4,8 @@ from fastmcp import Client
 from fastmcp.exceptions import ToolError
 from pydantic import SecretStr
 
-from flux_mcp.server import BearerTokenVerifier, FluxMCPServer
+from flux_mcp.auth import BearerTokenVerifier
+from flux_mcp.server import FluxMCPServer
 from flux_mcp.service import FluxMCPService
 
 from .conftest import png
@@ -95,3 +96,58 @@ def test_http_without_token_refuses_to_start(app_config, transport):
         make_server(app_config, transport, mode="http").validate_configuration()
     make_server(app_config, transport, mode="http", auth=False).validate_configuration()
     make_server(app_config, transport, mode="stdio").validate_configuration()
+
+
+async def upload_client(app_config, transport, **kwargs):
+    server = make_server(app_config, transport, mode="http", token="secret", **kwargs)
+    app = server.create_asgi_app()
+    return server, httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://t")
+
+
+async def test_upload_stores_image(app_config, transport):
+    server, http = await upload_client(app_config, transport)
+    async with http:
+        response = await http.post("/upload", headers={"Authorization": "Bearer secret"},
+                                   files={"file": ("photo.jpg", png(40, 30), "image/jpeg")})
+    assert response.status_code == 200
+    data = response.json()
+    assert (data["width"], data["height"]) == (40, 30)
+    assert data["url"] == f"http://flux.test:8300/images/{data['id']}.png"
+    assert server.service.flux.store.path_for(data["id"]) is not None
+
+
+@pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer wrong"},
+                                     {"Authorization": "Basic secret"}])
+async def test_upload_requires_token(app_config, transport, headers):
+    _, http = await upload_client(app_config, transport)
+    async with http:
+        response = await http.post("/upload", headers=headers, files={"file": ("a.png", png(8, 8))})
+    assert response.status_code == 401
+
+
+async def test_upload_without_auth_when_disabled(app_config, transport):
+    _, http = await upload_client(app_config, transport, auth=False)
+    async with http:
+        response = await http.post("/upload", files={"file": ("a.png", png(8, 8))})
+    assert response.status_code == 200
+
+
+async def test_upload_rejects_bad_files(app_config, transport):
+    app_config.flux.max_input_bytes = 2000
+    _, http = await upload_client(app_config, transport)
+    auth = {"Authorization": "Bearer secret"}
+    async with http:
+        text = await http.post("/upload", headers=auth, files={"file": ("a.txt", b"hello")})
+        missing = await http.post("/upload", headers=auth, files={"other": ("a.png", png(8, 8))})
+        big = await http.post("/upload", headers=auth,
+                              files={"file": ("a.png", png(8, 8) + b"\0" * 5000)})
+    assert text.status_code == 400 and "not a readable image" in text.json()["error"]
+    assert missing.status_code == 400
+    assert big.status_code == 413
+
+
+async def test_upload_page(app_config, transport):
+    _, http = await upload_client(app_config, transport)
+    async with http:
+        page = await http.get("/upload")
+    assert page.status_code == 200 and "Upload a reference image" in page.text
