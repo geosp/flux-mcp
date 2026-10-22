@@ -33,9 +33,10 @@ def tool_errors() -> Iterator[None]:
 
 
 def image_result(flux: FluxService, result: GenerationResult, verb: str) -> ToolResult:
+    seed = f", seed {result.seed}" if result.seed is not None else ""
     lines = [
-        f"{verb} {len(result.images)} image(s) at {result.width}x{result.height}, "
-        f"seed {result.seed}. Full-resolution PNG:",
+        f"{verb} {len(result.images)} image(s) at {result.width}x{result.height}{seed}. "
+        "Full-resolution PNG:",
         *(f"- {img.url} (id {img.id})" for img in result.images),
     ]
     previews = [Image(data=flux.store.preview(img), format="jpeg") for img in result.images]

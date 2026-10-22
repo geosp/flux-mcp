@@ -51,6 +51,11 @@ class FluxConfig(BaseSettings):
         ge=128,
         description="Longest side of the JPEG preview returned inline"
     )
+    max_upscale_side: int = Field(
+        default=8192,
+        ge=1024,
+        description="Longest side upscale_image may produce"
+    )
     max_input_bytes: int = Field(
         default=20 * 1024 * 1024,
         description="Largest input image accepted by edit_image"

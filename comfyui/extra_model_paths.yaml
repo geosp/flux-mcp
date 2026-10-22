@@ -10,3 +10,5 @@ shared:
     clip
   vae: vae
   checkpoints: checkpoints
+  upscale_models: upscale_models
+  background_removal: background_removal

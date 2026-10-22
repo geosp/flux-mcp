@@ -16,8 +16,10 @@ CLI and configuration.
 
 | Tool | What it does |
 |---|---|
-| `generate_image(prompt, width=1024, height=1024, count=1, seed?, steps?, enhance_prompt=true)` | Text to image |
-| `edit_image(prompt, images, width?, height?, count=1, seed?, steps?, enhance_prompt=true)` | Edit an image, or compose a new one from up to 10 reference images. `images` lists ids (from previous results) or http(s) URLs; the prompt refers to them by order ("the fox from the first image on the porch from the second image"). Output keeps the first image's aspect ratio at about 1 MP unless a size is given |
+| `generate_image(prompt, width=1024, height=1024, count=1, seed?, steps?, enhance_prompt=true, quality="fast")` | Text to image. `quality="high"` uses the undistilled Klein Base model (50 steps, CFG 4): more detail and variety, about 3× slower |
+| `edit_image(prompt, images, width?, height?, count=1, seed?, steps?, enhance_prompt=true, quality="fast")` | Edit an image, or compose a new one from up to 10 reference images. `images` lists ids (from previous results) or http(s) URLs; the prompt refers to them by order ("the fox from the first image on the porch from the second image"). Output keeps the first image's aspect ratio at about 1 MP unless a size is given |
+| `upscale_image(image, factor=2)` | Enlarge 2× or 4× with Real-ESRGAN (output ≤ 8192 px per side) |
+| `remove_background(image)` | Cut out the subject onto a transparent PNG (BiRefNet) |
 | `list_models()` | Workflows and the model files ComfyUI sees |
 | `server_status()` | ComfyUI version, queue length, free memory |
 
@@ -56,11 +58,15 @@ The weights are in the gated repo
 ```bash
 cd /mnt/shared/huggingface/comfyui     # the MODELS_DIR mounted into ComfyUI
 for f in diffusion_models/flux3-image-klein-nvfp4.safetensors \
+         diffusion_models/flux3-image-klein-base-nvfp4.safetensors \
          text_encoders/qwen3vl_4b_bf16.safetensors \
          text_encoders/qwen3.5_9b_flux3_prompt_upsampler_w4a8.safetensors \
          vae/flux2-vae.safetensors; do
   uvx --from 'huggingface_hub[cli]' hf download black-forest-labs/flux-3-image-klein-comfy "$f" --local-dir .
 done
+uvx --from 'huggingface_hub[cli]' hf download Comfy-Org/BiRefNet background_removal/birefnet.safetensors --local-dir .
+mkdir -p upscale_models && curl -L -o upscale_models/RealESRGAN_x4plus.pth \
+  https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth
 ```
 
 | File | Size | Role |
@@ -69,6 +75,9 @@ done
 | `qwen3vl_4b_bf16.safetensors` | 8.9 GB | text encoder |
 | `qwen3.5_9b_flux3_prompt_upsampler_w4a8.safetensors` | 6.7 GB | prompt upsampler |
 | `flux2-vae.safetensors` | 0.3 GB | VAE |
+| `flux3-image-klein-base-nvfp4.safetensors` | 5.3 GB | undistilled base model, for `quality="high"` |
+| `upscale_models/RealESRGAN_x4plus.pth` | 64 MB | upscaler (BSD-3-Clause) |
+| `background_removal/birefnet.safetensors` | 0.4 GB | background removal (MIT) |
 
 To use other files (int8, bf16, the base checkpoint), edit the loader nodes in
 `workflows/*.json`.
@@ -84,8 +93,12 @@ Measured through the MCP endpoint, 1024×1024, one image, 16 steps:
 | `generate_image`, `enhance_prompt=false` | ~8.5 s |
 | `edit_image`, one reference, upsampler on | ~29 s |
 | `edit_image`, two references, 1536×1024 | ~45 s |
+| `generate_image`, `quality="high"` | ~46 s (~58 s when the base model loads) |
+| `upscale_image` 2× / 4× from 1024² | ~10 s / ~11 s |
+| `remove_background`, 1024² | ~2 s |
 
-With all models loaded, the host's available memory dropped by about 10 GB (the rest came out
+With the fast-mode models loaded, the host's available memory dropped by about 10 GB; with the
+base model resident as well it settled around 27 GB available (the rest came out
 of page cache). Clients with a short tool-call timeout should allow at least 60 s, or more
 for the first call; flux-mcp sends progress notifications while it waits.
 

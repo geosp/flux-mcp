@@ -2,7 +2,7 @@
 MCP Tool: Generate Image
 """
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import ToolResult
@@ -28,6 +28,11 @@ def register_tool(mcp: FastMCP, flux: FluxService) -> None:
             bool,
             Field(description="Expand the prompt into a full scene caption first (recommended)"),
         ] = True,
+        quality: Annotated[
+            Literal["fast", "high"],
+            Field(description="'high' uses the undistilled base model: more detail and variety, "
+                              "about 3 times slower (~45 s). Use only when the user asks for it."),
+        ] = "fast",
     ) -> ToolResult:
         """
         Generate images from a text description with FLUX 3 Image Klein
@@ -44,6 +49,7 @@ def register_tool(mcp: FastMCP, flux: FluxService) -> None:
                 seed=seed,
                 steps=steps,
                 enhance_prompt=enhance_prompt,
+                quality=quality,
                 on_progress=progress_reporter(ctx, flux.config.timeout_s),
             )
         return image_result(flux, result, "Generated")

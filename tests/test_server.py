@@ -30,7 +30,8 @@ def server(app_config, transport):
 async def test_tools_and_instructions(server):
     async with Client(server.create_mcp_app()) as client:
         names = {t.name for t in await client.list_tools()}
-        assert names == {"generate_image", "edit_image", "list_models", "server_status"}
+        assert names == {"generate_image", "edit_image", "upscale_image", "remove_background",
+                         "list_models", "server_status"}
         assert "generate_image" in client.instructions
 
 
@@ -52,7 +53,11 @@ async def test_edit_image_chains_from_generate(server):
             "prompt": "the fox from the first image in the scene from the second image",
             "images": [image_id, edited.structured_content["images"][0]["id"]],
         })
+        upscaled = await client.call_tool("upscale_image", {"image": image_id, "factor": 4})
+        cutout = await client.call_tool("remove_background", {"image": image_id})
     assert edited.structured_content["images"][0]["id"] != image_id
+    assert upscaled.structured_content["width"] == 4096 and upscaled.structured_content["seed"] is None
+    assert cutout.content[0].text.startswith("Cut out 1 image(s) at 1024x1024.")
     assert len(combined.structured_content["images"]) == 1
 
 
@@ -67,7 +72,7 @@ async def test_status_and_models(server):
         status = (await client.call_tool("server_status", {})).structured_content
         models = (await client.call_tool("list_models", {})).structured_content
     assert status["devices"][0]["vram_free_gib"] == 42.0
-    assert models["workflows"] == ["edit", "t2i"]
+    assert models["workflows"] == ["edit", "edit_hq", "remove_background", "t2i", "t2i_hq", "upscale"]
 
 
 async def test_image_route(app_config, transport):

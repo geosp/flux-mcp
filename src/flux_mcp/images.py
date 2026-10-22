@@ -58,7 +58,13 @@ class ImageStore:
     def preview(self, image: StoredImage) -> bytes:
         """JPEG copy no larger than preview_max_side on its longest side"""
         with Image.open(image.path) as img:
-            img = img.convert("RGB")
+            if img.mode in ("RGBA", "LA", "PA") or "transparency" in img.info:
+                # Show transparent areas as white instead of whatever color they hide
+                rgba = img.convert("RGBA")
+                img = Image.new("RGB", rgba.size, "white")
+                img.paste(rgba, mask=rgba.getchannel("A"))
+            else:
+                img = img.convert("RGB")
             img.thumbnail((self.preview_max_side, self.preview_max_side))
             out = io.BytesIO()
             img.save(out, format="JPEG", quality=85)

@@ -10,7 +10,7 @@ import logging
 import random
 from dataclasses import dataclass
 from math import sqrt
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from PIL import Image, UnidentifiedImageError
@@ -28,11 +28,15 @@ MAX_SEED = 2**53 - 1
 # Default edit output size, in pixels, when the caller gives none
 EDIT_DEFAULT_PIXELS = 1024 * 1024
 
+Quality = Literal["fast", "high"]
+# Workflow name suffix per quality
+QUALITY_SUFFIX = {"fast": "", "high": "_hq"}
+
 
 @dataclass(frozen=True)
 class GenerationResult:
     images: list[StoredImage]
-    seed: int
+    seed: int | None
     width: int
     height: int
 
@@ -69,6 +73,7 @@ class FluxService:
         seed: int | None = None,
         steps: int | None = None,
         enhance_prompt: bool = True,
+        quality: Quality = "fast",
         on_progress: ProgressCallback | None = None,
     ) -> GenerationResult:
         """Text to image"""
@@ -76,7 +81,7 @@ class FluxService:
         self._check_count(count)
         width, height = self._check_size(width, height)
         seed = self._seed(seed)
-        graph = self.workflows["t2i"].fill(
+        graph = self._workflow("t2i", quality).fill(
             prompt,
             enhance_prompt,
             width=width,
@@ -98,6 +103,7 @@ class FluxService:
         seed: int | None = None,
         steps: int | None = None,
         enhance_prompt: bool = True,
+        quality: Quality = "fast",
         on_progress: ProgressCallback | None = None,
     ) -> GenerationResult:
         """
@@ -111,7 +117,7 @@ class FluxService:
         """
         self._check_prompt(prompt)
         self._check_count(count)
-        workflow = self.workflows["edit"]
+        workflow = self._workflow("edit", quality)
         limit = workflow.references.max
         if not 1 <= len(images) <= limit:
             raise ValueError(f"images must hold 1 to {limit} image ids or URLs")
@@ -135,6 +141,38 @@ class FluxService:
         )
         images = await self._run(graph, on_progress)
         return GenerationResult(images, seed, width, height)
+
+    async def upscale(
+        self, image: str, factor: int = 2, on_progress: ProgressCallback | None = None
+    ) -> GenerationResult:
+        """Enlarge an image 2x or 4x with an upscaling model"""
+        if factor not in (2, 4):
+            raise ValueError("factor must be 2 or 4")
+        data = await self.load_input(image)
+        width, height = _image_size(data)
+        limit = self.config.max_upscale_side
+        if max(width, height) * factor > limit:
+            raise ValueError(
+                f"A {width}x{height} image upscaled {factor}x would exceed {limit} px; "
+                f"use factor 2 or a smaller image"
+            )
+        return await self._process_one("upscale", data, on_progress, scale=factor / 4)
+
+    async def remove_background(
+        self, image: str, on_progress: ProgressCallback | None = None
+    ) -> GenerationResult:
+        """Cut out the main subject onto a transparent background"""
+        return await self._process_one("remove_background", await self.load_input(image),
+                                       on_progress)
+
+    async def _process_one(
+        self, workflow: str, data: bytes, on_progress: ProgressCallback | None, **values: Any
+    ) -> GenerationResult:
+        """Run a single-image workflow (no prompt, no seed)"""
+        name = await self.comfy.upload(data, f"flux-mcp-{random.getrandbits(64):016x}.png")
+        graph = self.workflows[workflow].fill("", enhance_prompt=False, image=name, **values)
+        images = await self._run(graph, on_progress)
+        return GenerationResult(images, seed=None, width=images[0].width, height=images[0].height)
 
     async def load_input(self, image: str) -> bytes:
         """
@@ -180,6 +218,11 @@ class FluxService:
         prompt_id = await self.comfy.submit(graph)
         outputs = await self.comfy.wait(prompt_id, self.config.timeout_s, on_progress)
         return [self.store.save(await self.comfy.fetch(o)) for o in outputs]
+
+    def _workflow(self, name: str, quality: Quality):
+        if quality not in QUALITY_SUFFIX:
+            raise ValueError("quality must be 'fast' or 'high'")
+        return self.workflows[name + QUALITY_SUFFIX[quality]]
 
     def _check_prompt(self, prompt: str) -> None:
         if not prompt or not prompt.strip():

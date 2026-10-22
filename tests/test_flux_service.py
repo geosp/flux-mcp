@@ -1,4 +1,7 @@
+import io
+
 import pytest
+from PIL import Image
 
 from flux_mcp.service import FluxMCPService
 
@@ -91,3 +94,36 @@ async def test_edit_rejects_oversized_and_non_images(flux, fake_comfy):
     fake_comfy.remote_images["https://example.com/text"] = b"hello"
     with pytest.raises(ValueError, match="not a readable image"):
         await flux.load_input("https://example.com/text")
+
+
+async def test_quality_selects_workflow(flux, fake_comfy):
+    await flux.generate("a fox", quality="high")
+    await flux.edit("make it blue", [flux.store.save(png(64, 64)).id], quality="high")
+    assert fake_comfy.prompts["p1"]["8"]["inputs"]["steps"] == 50
+    assert fake_comfy.prompts["p2"]["1"]["inputs"]["unet_name"].startswith("flux3-image-klein-base")
+    with pytest.raises(ValueError, match="quality"):
+        await flux.generate("a fox", quality="ultra")
+
+
+@pytest.mark.parametrize("factor, size", [(2, (200, 100)), (4, (400, 200))])
+async def test_upscale(flux, fake_comfy, factor, size):
+    source = flux.store.save(png(100, 50))
+    result = await flux.upscale(source.id, factor)
+    assert (result.width, result.height) == size and result.seed is None
+    assert fake_comfy.prompts["p1"]["4"]["inputs"]["resize_type.multiplier"] == factor / 4
+
+
+async def test_upscale_limits(flux):
+    big = flux.store.save(png(3000, 1000))
+    with pytest.raises(ValueError, match="would exceed 8192"):
+        await flux.upscale(big.id, 4)
+    with pytest.raises(ValueError, match="factor must be 2 or 4"):
+        await flux.upscale(big.id, 3)
+
+
+async def test_remove_background_keeps_alpha(flux):
+    result = await flux.remove_background(flux.store.save(png(80, 60)).id)
+    with Image.open(result.images[0].path) as img:
+        assert img.mode == "RGBA" and img.size == (80, 60)
+    with Image.open(io.BytesIO(flux.store.preview(result.images[0]))) as preview:
+        assert preview.getpixel((0, 0)) == (255, 255, 255)

@@ -18,9 +18,9 @@ from flux_mcp.config import AppConfig, FluxConfig
 WORKFLOWS_DIR = Path(__file__).parent.parent / "workflows"
 
 
-def png(width: int, height: int, color: str = "red") -> bytes:
+def png(width: int, height: int, color: str = "red", mode: str = "RGB") -> bytes:
     out = io.BytesIO()
-    Image.new("RGB", (width, height), color).save(out, format="PNG")
+    Image.new(mode, (width, height), color).save(out, format="PNG")
     return out.getvalue()
 
 
@@ -29,6 +29,7 @@ class FakeComfy:
         self.prompts: dict[str, dict] = {}
         self.polls: dict[str, int] = {}
         self.uploads: list[str] = []
+        self.upload_sizes: dict[str, tuple[int, int]] = {}
         self.fail_with: str | None = None
         self.never_finish = False
         self.deleted: list[str] = []
@@ -61,11 +62,18 @@ class FakeComfy:
             return httpx.Response(200, json={})
         if path == "/view":
             prompt_id, index = request.url.params["filename"].removesuffix(".png").split("_")
-            latent = self._latent(prompt_id)
-            return httpx.Response(200, content=png(latent["width"], latent["height"]))
+            graph = self.prompts[prompt_id]
+            if graph.get("5", {}).get("class_type") == "JoinImageWithAlpha":
+                width, height = self.upload_sizes[graph["1"]["inputs"]["image"]]
+                return httpx.Response(200, content=png(width, height, (0, 0, 0, 0), "RGBA"))
+            width, height = self._output_size(graph)
+            return httpx.Response(200, content=png(width, height))
         if path == "/upload/image":
             name = f"upload{len(self.uploads) + 1}.png"
             self.uploads.append(name)
+            data = _multipart_file(request)
+            with Image.open(io.BytesIO(data)) as img:
+                self.upload_sizes[name] = img.size
             return httpx.Response(200, json={"name": name, "subfolder": "", "type": "input"})
         if path == "/system_stats":
             return httpx.Response(200, json={
@@ -77,19 +85,33 @@ class FakeComfy:
             return httpx.Response(200, json=[f"{path.rsplit('/', 1)[1]}-file.safetensors"])
         return httpx.Response(404)
 
-    def _latent(self, prompt_id: str) -> dict:
-        return self.prompts[prompt_id]["7"]["inputs"]
+    def _output_size(self, graph: dict) -> tuple[int, int]:
+        if "7" in graph and "width" in graph["7"]["inputs"]:
+            return graph["7"]["inputs"]["width"], graph["7"]["inputs"]["height"]
+        width, height = self.upload_sizes[graph["1"]["inputs"]["image"]]
+        scale = 4 * graph["4"]["inputs"].get("resize_type.multiplier", 0.25)
+        return int(width * scale), int(height * scale)
 
     def _history(self, prompt_id: str) -> dict:
         if self.fail_with:
             return {"outputs": {}, "status": {"status_str": "error", "completed": False, "messages": [
                 ["execution_error", {"node_type": "KSampler", "exception_message": self.fail_with}],
             ]}}
-        count = self._latent(prompt_id)["batch_size"]
+        latent = self.prompts[prompt_id].get("7", {}).get("inputs", {})
+        count = latent.get("batch_size", 1)
         images = [{"filename": f"{prompt_id}_{i}.png", "subfolder": "flux-mcp", "type": "output"}
                   for i in range(count)]
         return {"outputs": {"10": {"images": images}},
                 "status": {"status_str": "success", "completed": True, "messages": []}}
+
+
+def _multipart_file(request: httpx.Request) -> bytes:
+    body = request.read()
+    boundary = request.headers["content-type"].split("boundary=")[1].encode()
+    for part in body.split(b"--" + boundary):
+        if b'name="image"' in part:
+            return part.split(b"\r\n\r\n", 1)[1].rsplit(b"\r\n", 1)[0]
+    raise AssertionError("no image part")
 
 
 @pytest.fixture

@@ -14,7 +14,7 @@ def workflows():
 
 
 def test_shipped_workflows_load(workflows):
-    assert set(workflows) == {"t2i", "edit"}
+    assert set(workflows) == {"t2i", "edit", "t2i_hq", "edit_hq", "upscale", "remove_background"}
 
 
 def test_fill_sets_params_without_changing_template(workflows):
@@ -89,3 +89,13 @@ def test_missing_file_rejected(tmp_path: Path):
     (tmp_path / "nodes.yaml").write_text("w:\n  file: nope.json\n  params: {}\n")
     with pytest.raises(ValueError, match="file not found"):
         load_workflows(tmp_path)
+
+
+def test_hq_uses_base_model_defaults(workflows):
+    graph = workflows["t2i_hq"].fill("a fox", seed=1)
+    assert graph["1"]["inputs"]["unet_name"] == "flux3-image-klein-base-nvfp4.safetensors"
+    assert (graph["8"]["inputs"]["steps"], graph["8"]["inputs"]["cfg"]) == (50, 4.0)
+    assert workflows["t2i_hq"].fill("a fox", steps=30)["8"]["inputs"]["steps"] == 30
+    fast = workflows["t2i"].fill("a fox")
+    assert fast["1"]["inputs"]["unet_name"] == "flux3-image-klein-nvfp4.safetensors"
+    assert (fast["8"]["inputs"]["steps"], fast["8"]["inputs"]["cfg"]) == (16, 1.0)

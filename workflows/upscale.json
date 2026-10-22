@@ -1,0 +1,58 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Input image"
+    },
+    "inputs": {
+      "image": "example.png"
+    }
+  },
+  "2": {
+    "class_type": "UpscaleModelLoader",
+    "inputs": {
+      "model_name": "RealESRGAN_x4plus.pth"
+    }
+  },
+  "3": {
+    "class_type": "ImageUpscaleWithModel",
+    "_meta": {
+      "title": "4x model upscale"
+    },
+    "inputs": {
+      "upscale_model": [
+        "2",
+        0
+      ],
+      "image": [
+        "1",
+        0
+      ]
+    }
+  },
+  "4": {
+    "class_type": "ResizeImageMaskNode",
+    "_meta": {
+      "title": "Scale to the requested factor"
+    },
+    "inputs": {
+      "input": [
+        "3",
+        0
+      ],
+      "resize_type": "scale by multiplier",
+      "resize_type.multiplier": 1.0,
+      "scale_method": "lanczos"
+    }
+  },
+  "5": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "4",
+        0
+      ],
+      "filename_prefix": "flux-mcp/upscale"
+    }
+  }
+}

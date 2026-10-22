@@ -2,7 +2,7 @@
 MCP Tool: Edit Image
 """
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastmcp import Context, FastMCP
 from fastmcp.tools import ToolResult
@@ -47,6 +47,11 @@ def register_tool(mcp: FastMCP, flux: FluxService) -> None:
             bool,
             Field(description="Expand the request into a full edit instruction first (recommended)"),
         ] = True,
+        quality: Annotated[
+            Literal["fast", "high"],
+            Field(description="'high' uses the undistilled base model: more detail, "
+                              "about 3 times slower (~45 s). Use only when the user asks for it."),
+        ] = "fast",
     ) -> ToolResult:
         """
         Edit an image, or combine several reference images, with FLUX 3 Image Klein
@@ -66,6 +71,7 @@ def register_tool(mcp: FastMCP, flux: FluxService) -> None:
                 seed=seed,
                 steps=steps,
                 enhance_prompt=enhance_prompt,
+                quality=quality,
                 on_progress=progress_reporter(ctx, flux.config.timeout_s),
             )
         return image_result(flux, result, "Edited")
