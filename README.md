@@ -209,6 +209,8 @@ uv run pytest        # fake ComfyUI over httpx.MockTransport; no GPU needed
 uv run ruff check
 ```
 
+How the pieces fit together, with diagrams: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 Layout follows mcp-service-kit's example: `server.py` (server, auth, `main`), `service.py`
 (tool discovery, image route), `features/*/tool.py` (one tool each), `flux_service.py` and
 `comfy_client.py` (business logic, no MCP imports), `workflows.py`, `images.py`, `config.py`.
