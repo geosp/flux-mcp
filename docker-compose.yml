@@ -1,0 +1,44 @@
+services:
+  comfyui:
+    build: ./comfyui
+    image: flux-mcp-comfyui:v0.42.1
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    ipc: host
+    ports:
+      - "${COMFYUI_PORT:-8188}:8188"   # web UI, LAN only
+    volumes:
+      - ${MODELS_DIR:-/mnt/shared/huggingface/comfyui}:/models:ro
+      - comfyui-output:/opt/ComfyUI/output
+      - comfyui-input:/opt/ComfyUI/input
+      - comfyui-user:/opt/ComfyUI/user
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8188/system_stats"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  flux-mcp:
+    build: .
+    image: flux-mcp:latest
+    depends_on:
+      comfyui:
+        condition: service_healthy
+    environment:
+      FLUX_COMFYUI_URL: http://comfyui:8188
+      FLUX_MCP_TOKEN: ${FLUX_MCP_TOKEN:?set FLUX_MCP_TOKEN in .env}
+      FLUX_PUBLIC_BASE_URL: ${FLUX_PUBLIC_BASE_URL:-http://10.0.0.96:8300}
+    ports:
+      - "${FLUX_MCP_PORT:-8300}:8300"
+    volumes:
+      - images:/data/images
+    restart: unless-stopped
+
+volumes:
+  comfyui-output:
+  comfyui-input:
+  comfyui-user:
+  images:

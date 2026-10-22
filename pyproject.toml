@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "flux-mcp"
+version = "0.1.0"
+description = "MCP server for FLUX image generation and editing through ComfyUI."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp-service-kit @ git+https://github.com/geosp/mcp-service-kit@v0.1.0",
+    "httpx>=0.28",
+    "pillow>=11",
+    "pyyaml>=6",
+]
+
+[project.scripts]
+flux-mcp = "flux_mcp.server:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1",
+    "pytest-asyncio>=1.4",
+    "ruff>=0.17",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/flux_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

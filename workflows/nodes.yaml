@@ -1,0 +1,36 @@
+# Maps tool parameters to the workflow inputs they set: [node id, input name].
+# Workflows are ComfyUI API-format graphs, flattened by hand from Black Forest Labs'
+# FLUX 3 Image Klein templates (black-forest-labs/flux-3-image-klein-comfy, workflows/, MIT).
+#
+# upsampler: the prompt-upsampler nodes. With enhance_prompt on, the request is formatted
+# with prompt_template into prompt_target and the upsampler's output feeds the text encoder.
+# With it off, the nodes are removed and each consumer gets the raw prompt.
+
+t2i:
+  file: flux3_klein_t2i.json
+  params:
+    width:      [["7", "width"]]
+    height:     [["7", "height"]]
+    batch_size: [["7", "batch_size"]]
+    seed:       [["8", "seed"], ["21", "sampling_mode.seed"]]
+    steps:      [["8", "steps"]]
+  upsampler:
+    nodes: ["20", "21"]
+    prompt_target: ["21", "prompt"]
+    consumers: [["5", "text"]]
+    prompt_template: "TARGET CANVAS: {aspect}\n{prompt}"
+
+edit:
+  file: flux3_klein_edit.json
+  params:
+    image:      [["11", "image"]]
+    width:      [["7", "width"]]
+    height:     [["7", "height"]]
+    batch_size: [["7", "batch_size"]]
+    seed:       [["8", "seed"], ["21", "sampling_mode.seed"]]
+    steps:      [["8", "steps"]]
+  upsampler:
+    nodes: ["20", "21"]
+    prompt_target: ["21", "prompt"]
+    consumers: [["5", "text"]]
+    prompt_template: "Reference images follow in order (the first image, the second image, ...).\nUser request: {prompt}\nOutput the caption."

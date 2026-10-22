@@ -1,0 +1,12 @@
+# Shared model store, mounted read-only at /models.
+# unet/ and clip/ are the legacy folder names used by the older FLUX.1/FLUX.2 downloads.
+shared:
+  base_path: /models
+  diffusion_models: |
+    diffusion_models
+    unet
+  text_encoders: |
+    text_encoders
+    clip
+  vae: vae
+  checkpoints: checkpoints
