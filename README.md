@@ -215,5 +215,5 @@ Layout follows mcp-service-kit's example: `server.py` (server, auth, `main`), `s
 
 ## License
 
-Code: see repository. FLUX 3 Image Klein weights: FLUX Kommunity License. Text encoder and
+Code: Apache License 2.0, see [LICENSE](LICENSE). FLUX 3 Image Klein weights: FLUX Kommunity License. Text encoder and
 prompt upsampler: Apache-2.0. Workflow templates: MIT (Comfy Org).

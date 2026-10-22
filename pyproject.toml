@@ -7,6 +7,8 @@ name = "flux-mcp"
 version = "0.1.0"
 description = "MCP server for FLUX image generation and editing through ComfyUI."
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "mcp-service-kit @ git+https://github.com/geosp/mcp-service-kit@v0.1.0",
