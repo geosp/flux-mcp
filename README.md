@@ -34,6 +34,25 @@ Labs' Qwen3.5-9B prompt upsampler. Turn it off only when the client writes a com
 Limits (configurable): sides 256–4096 px (rounded to multiples of 16), up to 4 images per call,
 prompts up to 4000 characters, edit inputs up to 20 MB, 300 s per call.
 
+## Layout with bounding boxes
+
+`generate_image` and `edit_image` take optional `boxes`. Each box is
+`{"bbox": [y_min, x_min, y_max, x_max], "desc": "...", "text": "..."}` on a 0–1000 grid with
+(0, 0) at the top left, stretched over the canvas; `text` is optional and rendered verbatim.
+Boxes guide placement and scale; they are not hard masks.
+
+```json
+{"prompt": "a snowy forest clearing", "width": 1536, "height": 1024, "boxes": [
+  {"bbox": [350, 60, 950, 420], "desc": "a red fox sitting, facing right"},
+  {"bbox": [250, 600, 800, 950], "desc": "a weathered wooden trail sign", "text": "FOX TRAIL"}]}
+```
+
+For `edit_image`, boxes mark regions of the **first** image and are named `obj_1`, `obj_2`, …
+in order, so the prompt can say "remove obj_1" or "replace obj_2 with a bicycle". Behind the
+scenes the prompt upsampler switches to BFL's box-aware system prompts
+(`workflows/prompts/*_bbox.txt`); with `enhance_prompt=false` the element table is appended to
+your caption, as ComfyUI's `Flux3LayoutPrompt` does.
+
 ## Uploading your own images
 
 Tools take image ids, so upload an image first and use the returned id:
@@ -93,14 +112,16 @@ Measured through the MCP endpoint, 1024×1024, one image, 16 steps:
 | `generate_image`, `enhance_prompt=false` | ~8.5 s |
 | `edit_image`, one reference, upsampler on | ~29 s |
 | `edit_image`, two references, 1536×1024 | ~45 s |
+| `generate_image` with two boxes, 1536×1024 | ~27 s |
 | `generate_image`, `quality="high"` | ~46 s (~58 s when the base model loads) |
 | `upscale_image` 2× / 4× from 1024² | ~10 s / ~11 s |
 | `remove_background`, 1024² | ~2 s |
 
-With the fast-mode models loaded, the host's available memory dropped by about 10 GB; with the
-base model resident as well it settled around 27 GB available (the rest came out
-of page cache). Clients with a short tool-call timeout should allow at least 60 s, or more
-for the first call; flux-mcp sends progress notifications while it waits.
+Memory: with the fast-mode models loaded, the host's available memory dropped by about 10 GB
+(the rest came out of page cache); with the base model resident as well, about 27 GB stayed
+available next to vLLM. Clients with a short tool-call timeout should allow at least 60 s
+(120 s for `quality="high"`), or more for the first call; flux-mcp sends progress notifications
+while it waits.
 
 ## Run
 

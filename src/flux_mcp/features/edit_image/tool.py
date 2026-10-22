@@ -8,8 +8,15 @@ from fastmcp import Context, FastMCP
 from fastmcp.tools import ToolResult
 from pydantic import Field
 
+from ...boxes import MAX_BOXES, Box
 from ...flux_service import FluxService
 from ...results import image_result, progress_reporter, tool_errors
+
+BOXES_HELP = (
+    "Optional regions of the FIRST image, same format as generate_image boxes. They are "
+    'named obj_1, obj_2, ... in order; refer to them in the prompt ("remove obj_1", '
+    '"replace obj_2 with a bicycle", "move obj_1 to the right").'
+)
 
 
 def register_tool(mcp: FastMCP, flux: FluxService) -> None:
@@ -52,6 +59,10 @@ def register_tool(mcp: FastMCP, flux: FluxService) -> None:
             Field(description="'high' uses the undistilled base model: more detail, "
                               "about 3 times slower (~45 s). Use only when the user asks for it."),
         ] = "fast",
+        boxes: Annotated[
+            list[Box] | None,
+            Field(description=BOXES_HELP, max_length=MAX_BOXES),
+        ] = None,
     ) -> ToolResult:
         """
         Edit an image, or combine several reference images, with FLUX 3 Image Klein
@@ -72,6 +83,7 @@ def register_tool(mcp: FastMCP, flux: FluxService) -> None:
                 steps=steps,
                 enhance_prompt=enhance_prompt,
                 quality=quality,
+                boxes=boxes,
                 on_progress=progress_reporter(ctx, flux.config.timeout_s),
             )
         return image_result(flux, result, "Edited")

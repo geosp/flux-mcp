@@ -20,6 +20,19 @@ Target = tuple[str, str]
 
 
 @dataclass(frozen=True)
+class BoxVariant:
+    """
+    How the upsampler is driven when the request carries bounding boxes
+
+    ``system_prompt`` replaces the input at ``system_prompt_target``, and the
+    request is formatted with ``prompt_template`` ({prompt}, {aspect}, {boxes}).
+    """
+    system_prompt_target: Target
+    system_prompt: str
+    prompt_template: str
+
+
+@dataclass(frozen=True)
 class Upsampler:
     """
     Optional prompt-upsampler nodes
@@ -33,6 +46,7 @@ class Upsampler:
     prompt_target: Target
     consumers: list[Target]
     prompt_template: str = "{prompt}"
+    boxes: BoxVariant | None = None
 
 
 @dataclass(frozen=True)
@@ -65,6 +79,7 @@ class Workflow:
         prompt: str,
         enhance_prompt: bool = True,
         images: list[str] | None = None,
+        boxes: list[dict[str, Any]] | None = None,
         **values: Any,
     ) -> dict[str, Any]:
         """
@@ -74,11 +89,12 @@ class Workflow:
             prompt: The user's request
             enhance_prompt: Run the prompt upsampler (if the workflow has one)
             images: Uploaded reference image names, in order (workflows with references)
+            boxes: Layout rows ({"id", "bbox", "desc"}), see boxes.py
             **values: Parameters from nodes.yaml; None means keep the default
 
         Raises:
             KeyError: A parameter is not defined for this workflow
-            ValueError: Wrong number of reference images
+            ValueError: Wrong number of reference images, or boxes not supported
         """
         graph = copy.deepcopy(self.graph)
         merged = {**self.defaults, **{k: v for k, v in values.items() if v is not None}}
@@ -95,16 +111,30 @@ class Workflow:
             raise ValueError(f"Workflow '{self.name}' takes no reference images")
 
         up = self.upsampler
+        if boxes and (up is None or up.boxes is None):
+            raise ValueError(f"Workflow '{self.name}' does not support bounding boxes")
+        boxes_json = json.dumps(boxes, ensure_ascii=False) if boxes else ""
+
         if up is not None and enhance_prompt:
-            text = up.prompt_template.format(
-                prompt=prompt, aspect=_aspect(merged.get("width"), merged.get("height"))
+            template = up.prompt_template
+            if boxes:
+                template = up.boxes.prompt_template
+                node, input_name = up.boxes.system_prompt_target
+                graph[node]["inputs"][input_name] = up.boxes.system_prompt
+            text = template.format(
+                prompt=prompt.strip(),
+                aspect=_aspect(merged.get("width"), merged.get("height")),
+                boxes=boxes_json,
             )
             node, input_name = up.prompt_target
             graph[node]["inputs"][input_name] = text
         else:
+            # Without the upsampler the element table goes straight after the caption,
+            # as ComfyUI's Flux3LayoutPrompt does
+            text = f"{prompt.rstrip()} {boxes_json}" if boxes else prompt
             consumers = up.consumers if up is not None else self.params.get("prompt", [])
             for node, input_name in consumers:
-                graph[node]["inputs"][input_name] = prompt
+                graph[node]["inputs"][input_name] = text
             for node in up.nodes if up is not None else []:
                 graph.pop(node, None)
 
@@ -153,11 +183,20 @@ def load_workflows(directory: Path) -> dict[str, Workflow]:
         upsampler = None
         if "upsampler" in entry:
             u = entry["upsampler"]
+            box_variant = None
+            if "boxes" in u:
+                b = u["boxes"]
+                box_variant = BoxVariant(
+                    system_prompt_target=_target(b["system_prompt_target"]),
+                    system_prompt=(directory / b["system_prompt_file"]).read_text(),
+                    prompt_template=b["prompt_template"],
+                )
             upsampler = Upsampler(
                 nodes=[str(n) for n in u["nodes"]],
                 prompt_target=_target(u["prompt_target"]),
                 consumers=[_target(t) for t in u["consumers"]],
                 prompt_template=u.get("prompt_template", "{prompt}"),
+                boxes=box_variant,
             )
 
         references = None
@@ -188,6 +227,8 @@ def _check(workflow: Workflow) -> None:
     if workflow.upsampler is not None:
         targets += [workflow.upsampler.prompt_target, *workflow.upsampler.consumers]
         targets += [(n, None) for n in workflow.upsampler.nodes]
+        if workflow.upsampler.boxes is not None:
+            targets.append(workflow.upsampler.boxes.system_prompt_target)
     if workflow.references is not None:
         refs = workflow.references
         targets.append((refs.loader, refs.input))

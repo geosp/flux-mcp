@@ -27,6 +27,10 @@ This server generates and edits images with FLUX 3 Image Klein.
   Pass image ids returned by generate_image/edit_image (or http(s) URLs) in `images`, and refer
   to them by order in the prompt ("the person from the first image in the scene from the
   second image").
+- Layout: generate_image and edit_image take optional `boxes`, each {"bbox": [y_min, x_min,
+  y_max, x_max] on a 0-1000 grid, (0,0) top left, "desc": "...", "text": "..."}. Use them when
+  the user cares where things go, or to point at a region of an image to edit (boxes are named
+  obj_1, obj_2, ... in order; e.g. prompt "remove obj_1").
 - To use the user's own image, upload it first and pass the returned id. With a shell:
   curl -H "Authorization: Bearer $FLUX_MCP_TOKEN" -F file=@photo.jpg <server>/upload
   (returns JSON with "id"). Without a shell, ask the user to open <server>/upload in a browser,

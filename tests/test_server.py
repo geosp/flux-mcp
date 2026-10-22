@@ -156,3 +156,16 @@ async def test_upload_page(app_config, transport):
     async with http:
         page = await http.get("/upload")
     assert page.status_code == 200 and "Upload a reference image" in page.text
+
+
+async def test_generate_with_boxes(server, fake_comfy):
+    async with Client(server.create_mcp_app()) as client:
+        await client.call_tool("generate_image", {"prompt": "a fox and a sign", "boxes": [
+            {"bbox": [100, 50, 900, 450], "desc": "a red fox"},
+            {"bbox": [600, 550, 950, 950], "desc": "a wooden sign", "text": "Welcome"},
+        ]})
+        with pytest.raises(ToolError):
+            await client.call_tool("generate_image", {"prompt": "x", "boxes": [
+                {"bbox": [900, 0, 100, 500], "desc": "upside down"}]})
+    request = fake_comfy.prompts["p1"]["21"]["inputs"]["prompt"]
+    assert '"desc": "a wooden sign \\"Welcome\\""' in request

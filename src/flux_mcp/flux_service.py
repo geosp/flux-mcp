@@ -15,6 +15,7 @@ from typing import Any, Literal
 import httpx
 from PIL import Image, UnidentifiedImageError
 
+from .boxes import Box, layout_rows
 from .comfy_client import ComfyClient, ProgressCallback
 from .config import FluxConfig
 from .images import ID_PATTERN, ImageStore, StoredImage
@@ -74,6 +75,7 @@ class FluxService:
         steps: int | None = None,
         enhance_prompt: bool = True,
         quality: Quality = "fast",
+        boxes: list[Box] | None = None,
         on_progress: ProgressCallback | None = None,
     ) -> GenerationResult:
         """Text to image"""
@@ -89,6 +91,7 @@ class FluxService:
             batch_size=count,
             seed=seed,
             steps=self._check_steps(steps),
+            boxes=layout_rows(boxes) if boxes else None,
         )
         images = await self._run(graph, on_progress)
         return GenerationResult(images, seed, width, height)
@@ -104,6 +107,7 @@ class FluxService:
         steps: int | None = None,
         enhance_prompt: bool = True,
         quality: Quality = "fast",
+        boxes: list[Box] | None = None,
         on_progress: ProgressCallback | None = None,
     ) -> GenerationResult:
         """
@@ -114,6 +118,7 @@ class FluxService:
                 prompt refers to them ("the first image", "the second image", ...)
             width, height: Output size; by default the first image's aspect ratio
                 at about one megapixel
+            boxes: Regions of the first image the prompt refers to as obj_1, obj_2, ...
         """
         self._check_prompt(prompt)
         self._check_count(count)
@@ -138,6 +143,7 @@ class FluxService:
             batch_size=count,
             seed=seed,
             steps=self._check_steps(steps),
+            boxes=layout_rows(boxes) if boxes else None,
         )
         images = await self._run(graph, on_progress)
         return GenerationResult(images, seed, width, height)

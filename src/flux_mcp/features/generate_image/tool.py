@@ -8,8 +8,15 @@ from fastmcp import Context, FastMCP
 from fastmcp.tools import ToolResult
 from pydantic import Field
 
+from ...boxes import MAX_BOXES, Box
 from ...flux_service import FluxService
 from ...results import image_result, progress_reporter, tool_errors
+
+BOXES_HELP = (
+    'Optional layout: where to place elements. Each box is {"bbox": [y_min, x_min, y_max, '
+    'x_max] on a 0-1000 grid with (0, 0) at the top left, "desc": what goes there, "text": '
+    "exact text to render (optional)}. Boxes guide placement and scale, not exact pixels."
+)
 
 
 def register_tool(mcp: FastMCP, flux: FluxService) -> None:
@@ -33,6 +40,10 @@ def register_tool(mcp: FastMCP, flux: FluxService) -> None:
             Field(description="'high' uses the undistilled base model: more detail and variety, "
                               "about 3 times slower (~45 s). Use only when the user asks for it."),
         ] = "fast",
+        boxes: Annotated[
+            list[Box] | None,
+            Field(description=BOXES_HELP, max_length=MAX_BOXES),
+        ] = None,
     ) -> ToolResult:
         """
         Generate images from a text description with FLUX 3 Image Klein
@@ -50,6 +61,7 @@ def register_tool(mcp: FastMCP, flux: FluxService) -> None:
                 steps=steps,
                 enhance_prompt=enhance_prompt,
                 quality=quality,
+                boxes=boxes,
                 on_progress=progress_reporter(ctx, flux.config.timeout_s),
             )
         return image_result(flux, result, "Generated")

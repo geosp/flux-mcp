@@ -5,6 +5,9 @@
 # references: reference images. The first goes into loader.input; each further one gets a copy
 # of the loader node, linked into every consumer ({i} = the image's 0-based index).
 #
+# upsampler.boxes: used instead when the request has bounding boxes (BFL's t2i_bbox / i2i_bbox
+# system prompts and "locked box" request format, from the same templates).
+#
 # upsampler: the prompt-upsampler nodes. With enhance_prompt on, the request is formatted
 # with prompt_template into prompt_target and the upsampler's output feeds the text encoder.
 # With it off, the nodes are removed and each consumer gets the raw prompt.
@@ -24,6 +27,10 @@ t2i: &t2i
     prompt_target: ["21", "prompt"]
     consumers: [["5", "text"]]
     prompt_template: "TARGET CANVAS: {aspect}\n{prompt}"
+    boxes:
+      system_prompt_target: ["21", "system_prompt"]
+      system_prompt_file: prompts/t2i_bbox.txt
+      prompt_template: "TARGET CANVAS: {aspect}\nORIGINAL PROMPT:\n{prompt}\n\nLOCKED BOUNDING-BOX ANNOTATIONS ([y_min, x_min, y_max, x_max] on a 0-1000 canvas, with (0, 0) at the top-left). This is an authoritative JSON list of dictionaries; preserve every supplied identity, provenance value, null, and coordinate exactly:\n{boxes}"
 
 edit: &edit
   file: flux3_klein_edit.json
@@ -45,6 +52,10 @@ edit: &edit
     prompt_target: ["21", "prompt"]
     consumers: [["5", "text"]]
     prompt_template: "Reference images follow in order (the first image, the second image, ...).\nUser request: {prompt}\nOutput the caption."
+    boxes:
+      system_prompt_target: ["21", "system_prompt"]
+      system_prompt_file: prompts/i2i_bbox.txt
+      prompt_template: "Reference images follow in attachment order: ref_image_0, ref_image_1, ...\nUser editing instruction: ORIGINAL PROMPT:\n{prompt}\n\nLOCKED BOUNDING-BOX ANNOTATIONS ([y_min, x_min, y_max, x_max] on a 0-1000 canvas, with (0, 0) at the top-left). This is an authoritative JSON list of dictionaries; preserve every supplied identity, provenance value, null, and coordinate exactly:\n{boxes}\nDecide the edit, imagine the target image, and output the annotation record."
 
 # quality="high": the undistilled Klein Base checkpoint with BFL's base settings
 # (50 steps, CFG 4; same timestep shift). Same graphs, different defaults.
