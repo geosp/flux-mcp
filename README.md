@@ -58,6 +58,21 @@ done
 To use other files (int8, bf16, the base checkpoint), edit the loader nodes in
 `workflows/*.json`.
 
+## Performance (DGX Spark / GB10, next to a running vLLM)
+
+Measured through the MCP endpoint, 1024×1024, one image, 16 steps:
+
+| Call | Time |
+|---|---|
+| First call after ComfyUI starts (loads ~21 GB of weights from NFS) | ~260 s |
+| `generate_image`, upsampler on | ~17 s |
+| `generate_image`, `enhance_prompt=false` | ~8.5 s |
+| `edit_image`, upsampler on | ~29 s |
+
+With all models loaded, the host's available memory dropped by about 10 GB (the rest came out
+of page cache). Clients with a short tool-call timeout should allow at least 60 s, or more
+for the first call; flux-mcp sends progress notifications while it waits.
+
 ## Run
 
 ```bash
