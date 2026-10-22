@@ -39,15 +39,43 @@ def test_upsampler_on_formats_request(workflows):
 
 
 def test_upsampler_off_removes_nodes(workflows):
-    graph = workflows["edit"].fill("make it blue", False, image="x.png")
-    assert "20" not in graph and "21" not in graph
+    graph = workflows["edit"].fill("make it blue", False, images=["a.png", "b.png"])
+    assert not {"20", "21", "23"} & set(graph)
     assert graph["5"]["inputs"]["text"] == "make it blue"
-    assert graph["11"]["inputs"]["image"] == "x.png"
+    assert graph["12"]["inputs"]["images.image1"] == ["24", 0]
+
+
+def test_one_reference(workflows):
+    graph = workflows["edit"].fill("make it blue", images=["a.png"])
+    assert graph["11"]["inputs"]["image"] == "a.png"
+    assert "images.image1" not in graph["12"]["inputs"]
+    assert graph["23"]["inputs"] == {"images.image0": ["11", 0]}
+
+
+def test_several_references_clone_the_loader(workflows):
+    graph = workflows["edit"].fill("combine them", images=["a.png", "b.png", "c.png"])
+    assert graph["24"]["class_type"] == "LoadImage" and graph["24"]["inputs"]["image"] == "b.png"
+    assert graph["25"]["inputs"]["image"] == "c.png"
+    for node in ("12", "23"):
+        inputs = graph[node]["inputs"]
+        assert [inputs[f"images.image{i}"] for i in range(3)] == [["11", 0], ["24", 0], ["25", 0]]
+    assert "24" not in workflows["edit"].graph
+
+
+@pytest.mark.parametrize("images", [[], [f"{i}.png" for i in range(11)]])
+def test_reference_count_checked(workflows, images):
+    with pytest.raises(ValueError, match="1 to 10 reference images"):
+        workflows["edit"].fill("x", images=images)
+
+
+def test_t2i_takes_no_references(workflows):
+    with pytest.raises(ValueError, match="no reference images"):
+        workflows["t2i"].fill("a fox", images=["a.png"])
 
 
 def test_unknown_param_rejected(workflows):
     with pytest.raises(KeyError):
-        workflows["t2i"].fill("a fox", image="x.png")
+        workflows["t2i"].fill("a fox", denoise=0.5)
 
 
 def test_bad_mapping_rejected(tmp_path: Path):

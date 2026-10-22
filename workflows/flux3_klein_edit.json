@@ -132,7 +132,7 @@
   "11": {
     "class_type": "LoadImage",
     "_meta": {
-      "title": "Input image"
+      "title": "Reference image 1"
     },
     "inputs": {
       "image": "example.png"
@@ -200,6 +200,18 @@
       "use_default_template": true,
       "mtp": "off",
       "image": [
+        "23",
+        0
+      ]
+    }
+  },
+  "23": {
+    "class_type": "BatchImagesNode",
+    "_meta": {
+      "title": "Reference images for the upsampler"
+    },
+    "inputs": {
+      "images.image0": [
         "11",
         0
       ]

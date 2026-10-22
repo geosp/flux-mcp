@@ -17,7 +17,7 @@ CLI and configuration.
 | Tool | What it does |
 |---|---|
 | `generate_image(prompt, width=1024, height=1024, count=1, seed?, steps?, enhance_prompt=true)` | Text to image |
-| `edit_image(prompt, image, width?, height?, count=1, seed?, steps?, enhance_prompt=true)` | Edit an image given by id (from a previous result) or http(s) URL; output keeps the input's aspect ratio at about 1 MP unless a size is given |
+| `edit_image(prompt, images, width?, height?, count=1, seed?, steps?, enhance_prompt=true)` | Edit an image, or compose a new one from up to 10 reference images. `images` lists ids (from previous results) or http(s) URLs; the prompt refers to them by order ("the fox from the first image on the porch from the second image"). Output keeps the first image's aspect ratio at about 1 MP unless a size is given |
 | `list_models()` | Workflows and the model files ComfyUI sees |
 | `server_status()` | ComfyUI version, queue length, free memory |
 
@@ -67,7 +67,8 @@ Measured through the MCP endpoint, 1024×1024, one image, 16 steps:
 | First call after ComfyUI starts (loads ~21 GB of weights from NFS) | ~260 s |
 | `generate_image`, upsampler on | ~17 s |
 | `generate_image`, `enhance_prompt=false` | ~8.5 s |
-| `edit_image`, upsampler on | ~29 s |
+| `edit_image`, one reference, upsampler on | ~29 s |
+| `edit_image`, two references, 1536×1024 | ~45 s |
 
 With all models loaded, the host's available memory dropped by about 10 GB (the rest came out
 of page cache). Clients with a short tool-call timeout should allow at least 60 s, or more
@@ -147,7 +148,8 @@ and header.
 `workflows/flux3_klein_t2i.json` and `flux3_klein_edit.json` are ComfyUI API-format graphs,
 flattened by hand from Black Forest Labs' Klein templates (MIT, in the model repo's
 `workflows/`). `workflows/nodes.yaml` maps tool parameters to node inputs and describes the
-upsampler nodes, so you can swap models or add a workflow without code changes. To start from
+upsampler nodes and the reference-image inputs (extra references get copies of the image
+loader node, wired into the reference and upsampler nodes), so you can swap models or add a workflow without code changes. To start from
 a workflow built in the web UI, use *Export (API)* and map its node ids in `nodes.yaml`.
 
 ## Development

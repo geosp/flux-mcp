@@ -39,12 +39,30 @@ async def test_generate_validation(flux, kwargs, message):
 
 async def test_edit_by_id_keeps_aspect_ratio(flux, fake_comfy):
     source = flux.store.save(png(2000, 1000))
-    result = await flux.edit("make it blue", source.id)
+    result = await flux.edit("make it blue", [source.id])
     assert (result.width, result.height) == (1440, 720)
     graph = fake_comfy.prompts["p1"]
-    assert graph["11"]["inputs"]["image"] == "upload.png"
-    assert "upsampler" not in graph["21"]["inputs"]["prompt"]
+    assert graph["11"]["inputs"]["image"] == "upload1.png"
     assert graph["21"]["inputs"]["prompt"].endswith("User request: make it blue\nOutput the caption.")
+
+
+async def test_edit_with_several_references(flux, fake_comfy):
+    first = flux.store.save(png(1024, 768))
+    fake_comfy.remote_images["https://example.com/forest.jpg"] = png(800, 800)
+    result = await flux.edit("the person from the first image in the forest from the second "
+                             "image", [first.id, "https://example.com/forest.jpg"])
+    assert (result.width, result.height) == (1184, 880)
+    graph = fake_comfy.prompts["p1"]
+    assert fake_comfy.uploads == ["upload1.png", "upload2.png"]
+    assert graph["24"]["inputs"]["image"] == "upload2.png"
+    assert graph["12"]["inputs"]["images.image1"] == ["24", 0]
+
+
+@pytest.mark.parametrize("count", [0, 11])
+async def test_edit_reference_count(flux, fake_comfy, count):
+    with pytest.raises(ValueError, match="1 to 10"):
+        await flux.edit("x", [flux.store.save(png(64, 64)).id] * count)
+    assert fake_comfy.uploads == []
 
 
 async def test_edit_accepts_own_url_and_remote_url(flux, fake_comfy):

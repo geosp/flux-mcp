@@ -46,8 +46,13 @@ async def test_edit_image_chains_from_generate(server):
     async with Client(server.create_mcp_app()) as client:
         first = await client.call_tool("generate_image", {"prompt": "a red fox"})
         image_id = first.structured_content["images"][0]["id"]
-        edited = await client.call_tool("edit_image", {"prompt": "make it blue", "image": image_id})
+        edited = await client.call_tool("edit_image", {"prompt": "make it blue", "images": [image_id]})
+        combined = await client.call_tool("edit_image", {
+            "prompt": "the fox from the first image in the scene from the second image",
+            "images": [image_id, edited.structured_content["images"][0]["id"]],
+        })
     assert edited.structured_content["images"][0]["id"] != image_id
+    assert len(combined.structured_content["images"]) == 1
 
 
 async def test_bad_input_is_a_tool_error(server):

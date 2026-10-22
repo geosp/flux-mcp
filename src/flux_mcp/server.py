@@ -24,8 +24,10 @@ This server generates and edits images with FLUX 3 Image Klein.
 - generate_image: create images from a text description. A short request is fine: by default
   a prompt upsampler expands it into a full scene caption. Set enhance_prompt=false only when
   you pass a complete, detailed caption yourself.
-- edit_image: change an existing image. Pass the image id returned by generate_image (or an
-  http(s) URL) and describe the result you want.
+- edit_image: change an existing image, or combine up to 10 reference images into a new one.
+  Pass image ids returned by generate_image/edit_image (or http(s) URLs) in `images`, and refer
+  to them by order in the prompt ("the person from the first image in the scene from the
+  second image").
 - Each result includes a small JPEG preview plus a URL to the full-resolution PNG. Give the
   user the URL; quote the seed if they may want to reproduce the image.
 - Generation takes from several seconds to a minute; ask for count > 1 only when the user

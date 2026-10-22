@@ -64,8 +64,9 @@ class FakeComfy:
             latent = self._latent(prompt_id)
             return httpx.Response(200, content=png(latent["width"], latent["height"]))
         if path == "/upload/image":
-            self.uploads.append(request.headers["content-type"])
-            return httpx.Response(200, json={"name": "upload.png", "subfolder": "", "type": "input"})
+            name = f"upload{len(self.uploads) + 1}.png"
+            self.uploads.append(name)
+            return httpx.Response(200, json={"name": name, "subfolder": "", "type": "input"})
         if path == "/system_stats":
             return httpx.Response(200, json={
                 "system": {"comfyui_version": "0.42.1", "ram_free": 40 * 1024**3},

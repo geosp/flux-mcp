@@ -91,7 +91,7 @@ class FluxService:
     async def edit(
         self,
         prompt: str,
-        image: str,
+        images: list[str],
         width: int | None = None,
         height: int | None = None,
         count: int = 1,
@@ -101,25 +101,32 @@ class FluxService:
         on_progress: ProgressCallback | None = None,
     ) -> GenerationResult:
         """
-        Edit an image
+        Edit an image, or compose a new one from several reference images
 
         Args:
-            image: An image id from this server or an http(s) URL
-            width, height: Output size; by default the input's aspect ratio at
-                about one megapixel
+            images: Image ids from this server or http(s) URLs, in the order the
+                prompt refers to them ("the first image", "the second image", ...)
+            width, height: Output size; by default the first image's aspect ratio
+                at about one megapixel
         """
         self._check_prompt(prompt)
         self._check_count(count)
-        data = await self.load_input(image)
+        workflow = self.workflows["edit"]
+        limit = workflow.references.max
+        if not 1 <= len(images) <= limit:
+            raise ValueError(f"images must hold 1 to {limit} image ids or URLs")
+        data = [await self.load_input(image) for image in images]
         if width is None or height is None:
-            width, height = _fit_pixels(*_image_size(data), EDIT_DEFAULT_PIXELS)
+            width, height = _fit_pixels(*_image_size(data[0]), EDIT_DEFAULT_PIXELS)
         width, height = self._check_size(width, height)
-        name = await self.comfy.upload(data, f"flux-mcp-{random.getrandbits(64):016x}.png")
+        names = [
+            await self.comfy.upload(d, f"flux-mcp-{random.getrandbits(64):016x}.png") for d in data
+        ]
         seed = self._seed(seed)
-        graph = self.workflows["edit"].fill(
+        graph = workflow.fill(
             prompt,
             enhance_prompt,
-            image=name,
+            images=names,
             width=width,
             height=height,
             batch_size=count,
