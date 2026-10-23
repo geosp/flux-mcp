@@ -37,8 +37,15 @@ This server generates and edits images with FLUX 3 Image Klein.
   upload the image there and give you the id. Images pasted into the chat cannot be passed on.
 - Each result includes a small JPEG preview plus a URL to the full-resolution PNG. Give the
   user the URL; quote the seed if they may want to reproduce the image.
-- Generation takes from several seconds to a minute; ask for count > 1 only when the user
-  wants variations.
+- Results also include the caption the prompt upsampler wrote; show it when the user wants to
+  know how their request was interpreted.
+- get_image shows a stored image again with its prompt, seed and caption. Without an id it
+  returns the latest image: use it if a generation call timed out on your side, since the
+  server finishes the job anyway.
+- Generation takes from several seconds to a minute (a few minutes if the models were
+  unloaded); ask for count > 1 only when the user wants variations.
+- unload_models frees GPU memory; models reload on the next request. The server also unloads
+  them by itself after a period without requests.
 """
 
 

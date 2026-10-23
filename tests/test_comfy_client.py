@@ -21,10 +21,20 @@ async def test_submit_wait_fetch(transport):
         progress.append(status)
 
     prompt_id = await comfy.submit(graph(batch_size=2))
-    images = await comfy.wait(prompt_id, timeout=5, on_progress=on_progress)
-    assert [i.filename for i in images] == ["p1_0.png", "p1_1.png"]
+    output = await comfy.wait(prompt_id, timeout=5, on_progress=on_progress)
+    assert [i.filename for i in output.images] == ["p1_0.png", "p1_1.png"]
+    assert output.texts == []
     assert progress == ["queued, 1 of 1", "generating"]
-    assert (await comfy.fetch(images[0])).startswith(b"\x89PNG")
+    assert (await comfy.fetch(output.images[0])).startswith(b"\x89PNG")
+
+
+async def test_text_outputs_and_free(fake_comfy, transport):
+    comfy = client(transport)
+    graph_with_caption = {**graph(), "22": {"inputs": {}}}
+    output = await comfy.wait(await comfy.submit(graph_with_caption), timeout=5)
+    assert output.texts == ["A detailed upsampled caption."]
+    await comfy.free()
+    assert fake_comfy.freed == 1
 
 
 async def test_execution_error(fake_comfy, transport):

@@ -4,7 +4,7 @@ turning a GenerationResult into MCP content
 """
 
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Any, Iterator
 
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
@@ -13,6 +13,7 @@ from fastmcp.utilities.types import Image
 
 from .comfy_client import ComfyError, ProgressCallback
 from .flux_service import FluxService, GenerationResult
+from .images import StoredImage
 
 
 def progress_reporter(ctx: Context, timeout: float) -> ProgressCallback:
@@ -39,6 +40,8 @@ def image_result(flux: FluxService, result: GenerationResult, verb: str) -> Tool
         "Full-resolution PNG:",
         *(f"- {img.url} (id {img.id})" for img in result.images),
     ]
+    if result.caption:
+        lines += ["", f"Caption the model received (from the prompt upsampler): {result.caption}"]
     previews = [Image(data=flux.store.preview(img), format="jpeg") for img in result.images]
     return ToolResult(
         content=["\n".join(lines), *previews],
@@ -46,6 +49,28 @@ def image_result(flux: FluxService, result: GenerationResult, verb: str) -> Tool
             "seed": result.seed,
             "width": result.width,
             "height": result.height,
+            "caption": result.caption,
             "images": [{"id": img.id, "url": img.url} for img in result.images],
+        },
+    )
+
+
+def stored_image_result(
+    flux: FluxService, image: StoredImage, metadata: dict[str, Any]
+) -> ToolResult:
+    lines = [f"Image {image.id}, {image.width}x{image.height}: {image.url}"]
+    for key in ("tool", "prompt", "seed", "quality", "model", "steps", "created", "caption"):
+        if metadata.get(key) is not None:
+            lines.append(f"{key}: {metadata[key]}")
+    if not metadata:
+        lines.append("(no generation details stored, e.g. an upload)")
+    return ToolResult(
+        content=["\n".join(lines), Image(data=flux.store.preview(image), format="jpeg")],
+        structured_content={
+            "id": image.id,
+            "url": image.url,
+            "width": image.width,
+            "height": image.height,
+            "metadata": metadata,
         },
     )

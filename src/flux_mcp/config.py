@@ -60,6 +60,11 @@ class FluxConfig(BaseSettings):
         default=20 * 1024 * 1024,
         description="Largest input image accepted by edit_image"
     )
+    idle_unload_s: float = Field(
+        default=600.0,
+        ge=0,
+        description="Unload ComfyUI's models after this many idle seconds (0 = never)"
+    )
     timeout_s: float = Field(
         default=300.0,
         gt=0,

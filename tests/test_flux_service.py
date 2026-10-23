@@ -1,3 +1,4 @@
+import asyncio
 import io
 
 import pytest
@@ -127,3 +128,42 @@ async def test_remove_background_keeps_alpha(flux):
         assert img.mode == "RGBA" and img.size == (80, 60)
     with Image.open(io.BytesIO(flux.store.preview(result.images[0]))) as preview:
         assert preview.getpixel((0, 0)) == (255, 255, 255)
+
+
+
+async def test_idle_unload_after_jobs(flux, fake_comfy):
+    flux.config.idle_unload_s = 0.05
+    await flux.generate("a fox")
+    assert flux.memory_status()["models_loaded"] and flux.memory_status()["idle_unload_in_s"] == 0
+    await asyncio.sleep(0.15)
+    assert fake_comfy.freed == 1 and not flux.memory_status()["models_loaded"]
+
+
+async def test_new_job_postpones_idle_unload(flux, fake_comfy):
+    flux.config.idle_unload_s = 0.2
+    await flux.generate("a fox")
+    await asyncio.sleep(0.1)
+    await flux.generate("another fox")
+    await asyncio.sleep(0.15)
+    assert fake_comfy.freed == 0
+    await asyncio.sleep(0.15)
+    assert fake_comfy.freed == 1
+
+
+async def test_idle_unload_disabled(flux, fake_comfy):
+    flux.config.idle_unload_s = 0
+    await flux.generate("a fox")
+    assert flux.memory_status()["idle_unload_in_s"] is None
+
+
+async def test_metadata_without_upsampler_has_no_caption(flux):
+    result = await flux.generate("A complete caption.", enhance_prompt=False, seed=4)
+    assert result.caption is None
+    stored, metadata = await flux.get_image(result.images[0].id)
+    assert metadata["prompt"] == "A complete caption." and "caption" not in metadata
+    assert (await flux.get_image())[0].id == stored.id
+
+
+async def test_upload_has_no_metadata(flux):
+    stored = flux.store.save(png(8, 8))
+    assert (await flux.get_image(stored.url))[1] == {}

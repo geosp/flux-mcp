@@ -79,7 +79,7 @@ flowchart TB
 | `results.py` | Maps errors to MCP tool errors, forwards progress, builds the preview + URL result |
 | `flux_service.py` | The real work: limits, seeds, sizes, loading input images, choosing a workflow, running it, storing outputs |
 | `workflows.py` | Loads workflow JSON + `nodes.yaml` and fills in parameters (see below) |
-| `comfy_client.py` | `submit`, `wait`, `fetch`, `upload`, `cancel` against ComfyUI's HTTP API |
+| `comfy_client.py` | `submit`, `wait`, `fetch`, `upload`, `cancel`, `free` against ComfyUI's HTTP API |
 | `images.py` | Saves PNGs under random ids, resolves ids, makes JPEG previews |
 | `boxes.py` | Validates bounding boxes and turns them into the layout rows FLUX 3 expects |
 | `auth.py` | Constant-time token comparison, shared by `/mcp` and `/upload` |
@@ -112,9 +112,10 @@ sequenceDiagram
         F-->>C: progress notification ("queued, 1 of 2" / "generating")
     end
     F->>Q: GET /view (each output image)
-    F->>S: save PNG under a new random id
-    F-->>T: GenerationResult(images, seed, size)
-    T-->>C: text (seed + URL) + JPEG preview + structured {images: [{id, url}]}
+    F->>S: save PNG under a new random id,<br/>with prompt, seed, model and caption embedded
+    F->>F: restart the idle-unload timer
+    F-->>T: GenerationResult(images, seed, size, caption)
+    T-->>C: text (seed, URL, caption) + JPEG preview + structured {images: [{id, url}], caption}
 ```
 
 Errors take the same path back. Bad input (`ValueError`), ComfyUI failures (`ComfyError`) and
@@ -207,12 +208,34 @@ flowchart LR
 
 - Ids are `uuid4().hex`, so URLs can't be guessed. They are the only protection on
   `/images/…` (see below).
+- Each PNG records how it was made: a `flux-mcp` iTXt chunk holds JSON with the tool, prompt,
+  seed, model, steps, inputs, boxes and the upsampled caption. The caption comes from a
+  `PreviewAny` node (22) after the upsampler, whose text ComfyUI reports in `/history`.
+  `get_image` reads the chunk back; without an id it returns the newest image.
 - Everything is stored as PNG, so transparency from `remove_background` survives. Previews put
   transparent areas on white.
 - Tool inputs accept an id, this server's own image URL, or any http(s) URL (downloaded,
   size-capped, checked to be an image).
 - Images pasted into a chat can't reach a tool, because the model can't forward the bytes.
   That's why `/upload` exists.
+
+## Model memory
+
+ComfyUI keeps models loaded after a job, about 20 GB with everything resident. On spark-01 that
+memory is shared with vLLM, so flux-mcp gives it back when nobody is generating:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Unloaded
+    Unloaded --> Running: job starts (models load)
+    Running --> Loaded: last running job ends<br/>start idle timer
+    Loaded --> Running: new job<br/>cancel timer
+    Loaded --> Unloaded: FLUX_IDLE_UNLOAD_S passes<br/>or unload_models tool
+```
+
+Unloading is a `POST /free` with `unload_models` and `free_memory`; ComfyUI applies it once its
+queue is idle. The timer only starts when no job is running, and each new job cancels it.
+`server_status` reports the state and when the next unload will fire.
 
 ## Authentication
 

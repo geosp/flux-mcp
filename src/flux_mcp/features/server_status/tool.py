@@ -16,7 +16,7 @@ def register_tool(mcp: FastMCP, flux: FluxService) -> None:
     @mcp.tool()
     async def server_status() -> dict[str, Any]:
         """
-        Report whether ComfyUI is up, its queue length and free GPU memory
+        Report whether ComfyUI is up, its queue, free memory and whether models are loaded
         """
         with tool_errors():
             stats = await flux.comfy.system_stats()
@@ -35,4 +35,5 @@ def register_tool(mcp: FastMCP, flux: FluxService) -> None:
             "ram_free_gib": round(system.get("ram_free", 0) / GIB, 1),
             "queue": queue,
             "devices": devices,
+            "memory": flux.memory_status(),
         }

@@ -34,6 +34,7 @@ class FakeComfy:
         self.never_finish = False
         self.deleted: list[str] = []
         self.remote_images: dict[str, bytes] = {}
+        self.freed = 0
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         if request.url.host != "comfy":
@@ -81,6 +82,10 @@ class FakeComfy:
                 "devices": [{"name": "cuda:0 NVIDIA GB10", "vram_total": 121 * 1024**3,
                              "vram_free": 42 * 1024**3}],
             })
+        if path == "/free":
+            assert json.loads(request.content) == {"unload_models": True, "free_memory": True}
+            self.freed += 1
+            return httpx.Response(200, json={})
         if path.startswith("/models/"):
             return httpx.Response(200, json=[f"{path.rsplit('/', 1)[1]}-file.safetensors"])
         return httpx.Response(404)
@@ -101,7 +106,10 @@ class FakeComfy:
         count = latent.get("batch_size", 1)
         images = [{"filename": f"{prompt_id}_{i}.png", "subfolder": "flux-mcp", "type": "output"}
                   for i in range(count)]
-        return {"outputs": {"10": {"images": images}},
+        outputs = {"10": {"images": images}}
+        if "22" in self.prompts[prompt_id]:
+            outputs["22"] = {"text": ["A detailed upsampled caption."]}
+        return {"outputs": outputs,
                 "status": {"status_str": "success", "completed": True, "messages": []}}
 
 

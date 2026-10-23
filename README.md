@@ -20,12 +20,20 @@ CLI and configuration.
 | `edit_image(prompt, images, width?, height?, count=1, seed?, steps?, enhance_prompt=true, quality="fast")` | Edit an image, or compose a new one from up to 10 reference images. `images` lists ids (from previous results) or http(s) URLs; the prompt refers to them by order ("the fox from the first image on the porch from the second image"). Output keeps the first image's aspect ratio at about 1 MP unless a size is given |
 | `upscale_image(image, factor=2)` | Enlarge 2× or 4× with Real-ESRGAN (output ≤ 8192 px per side) |
 | `remove_background(image)` | Cut out the subject onto a transparent PNG (BiRefNet) |
+| `get_image(image?)` | Show a stored image again with its prompt, seed, caption and model; without an id, the latest image (recovers a call that timed out on the client) |
+| `unload_models()` | Free the models' GPU memory now; they reload on the next request |
 | `list_models()` | Workflows and the model files ComfyUI sees |
-| `server_status()` | ComfyUI version, queue length, free memory |
+| `server_status()` | ComfyUI version, queue length, free memory, whether models are loaded and when they will be unloaded |
 
 Each image result contains a text block with the seed and full-resolution URL
 (`<FLUX_PUBLIC_BASE_URL>/images/<id>.png`), one JPEG preview (longest side ≤ 1024 px) per image,
 and structured content `{seed, width, height, images: [{id, url}]}`.
+
+**What made each image.** Results include the caption the prompt upsampler actually sent to the
+model, so you can see how a request was interpreted. Every stored PNG also carries a `flux-mcp`
+iTXt chunk with JSON: tool, prompt, seed, quality, size, model, steps, input images, boxes,
+caption and time. `get_image` shows it, as does any tool that lists PNG text chunks (for
+example `exiftool image.png`, or Pillow's `Image.open(path).text["flux-mcp"]`).
 
 **Prompt upsampler.** FLUX 3 Klein expects full scene captions; a short prompt as typed gives
 generic results. By default (`enhance_prompt=true`) the request first goes through Black Forest
@@ -116,8 +124,9 @@ Measured through the MCP endpoint, 1024×1024, one image, 16 steps:
 | `generate_image`, `quality="high"` | ~46 s (~58 s when the base model loads) |
 | `upscale_image` 2× / 4× from 1024² | ~10 s / ~11 s |
 | `remove_background`, 1024² | ~2 s |
+| `generate_image` right after an idle unload (models reload) | ~25 s |
 
-Memory: with the fast-mode models loaded, the host's available memory dropped by about 10 GB
+Memory: an unload (idle or `unload_models`) gave back about 18–19 GB. With the fast-mode models loaded, the host's available memory dropped by about 10 GB
 (the rest came out of page cache); with the base model resident as well, about 27 GB stayed
 available next to vLLM. Clients with a short tool-call timeout should allow at least 60 s
 (120 s for `quality="high"`), or more for the first call; flux-mcp sends progress notifications
@@ -144,6 +153,7 @@ Configuration (environment or `.env`):
 | `FLUX_COMFYUI_URL` | `http://localhost:8188` | compose sets `http://comfyui:8188` |
 | `FLUX_PUBLIC_BASE_URL` | `http://localhost:8300` | base of the image URLs returned to clients |
 | `FLUX_OUTPUT_DIR` | `data/images` | |
+| `FLUX_IDLE_UNLOAD_S` | `600` | unload ComfyUI's models after this many idle seconds, freeing memory for other GPU users such as vLLM (`0` = never). The next call then reloads them (~25 s from page cache, or minutes after a ComfyUI restart) |
 | `FLUX_WORKFLOWS_DIR` | `workflows` | |
 | `FLUX_MAX_SIDE`, `FLUX_MIN_SIDE`, `FLUX_MAX_COUNT`, `FLUX_MAX_PROMPT_CHARS`, `FLUX_MAX_INPUT_BYTES`, `FLUX_TIMEOUT_S`, `FLUX_PREVIEW_MAX_SIDE` | see `config.py` | limits |
 | `MCP_PORT`, `MCP_HOST` | `3000`, `0.0.0.0` | from mcp-service-kit (the image sets `MCP_PORT=8300`) |

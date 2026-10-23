@@ -31,7 +31,7 @@ async def test_tools_and_instructions(server):
     async with Client(server.create_mcp_app()) as client:
         names = {t.name for t in await client.list_tools()}
         assert names == {"generate_image", "edit_image", "upscale_image", "remove_background",
-                         "list_models", "server_status"}
+                         "get_image", "unload_models", "list_models", "server_status"}
         assert "generate_image" in client.instructions
 
 
@@ -169,3 +169,25 @@ async def test_generate_with_boxes(server, fake_comfy):
                 {"bbox": [900, 0, 100, 500], "desc": "upside down"}]})
     request = fake_comfy.prompts["p1"]["21"]["inputs"]["prompt"]
     assert '"desc": "a wooden sign \\"Welcome\\""' in request
+
+
+async def test_caption_get_image_and_unload(server, fake_comfy):
+    async with Client(server.create_mcp_app()) as client:
+        generated = await client.call_tool("generate_image", {"prompt": "a red fox", "seed": 9})
+        image_id = generated.structured_content["images"][0]["id"]
+        latest = await client.call_tool("get_image", {})
+        by_id = await client.call_tool("get_image", {"image": image_id})
+        with pytest.raises(ToolError, match="No image"):
+            await client.call_tool("get_image", {"image": "0" * 32})
+        unloaded = await client.call_tool("unload_models", {})
+        status = (await client.call_tool("server_status", {})).structured_content
+    assert generated.structured_content["caption"] == "A detailed upsampled caption."
+    assert "Caption the model received" in generated.content[0].text
+    assert latest.structured_content["id"] == by_id.structured_content["id"] == image_id
+    metadata = by_id.structured_content["metadata"]
+    assert metadata["prompt"] == "a red fox" and metadata["seed"] == 9
+    assert metadata["caption"] == "A detailed upsampled caption."
+    assert metadata["model"] == "flux3-image-klein-nvfp4.safetensors" and metadata["steps"] == 16
+    assert by_id.content[1].type == "image"
+    assert unloaded.structured_content["models_loaded"] is False and fake_comfy.freed == 1
+    assert status["memory"]["models_loaded"] is False

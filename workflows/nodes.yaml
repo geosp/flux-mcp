@@ -23,7 +23,7 @@ t2i: &t2i
     seed:       [["8", "seed"], ["21", "sampling_mode.seed"]]
     steps:      [["8", "steps"]]
   upsampler:
-    nodes: ["20", "21"]
+    nodes: ["20", "21", "22"]
     prompt_target: ["21", "prompt"]
     consumers: [["5", "text"]]
     prompt_template: "TARGET CANVAS: {aspect}\n{prompt}"
@@ -48,7 +48,7 @@ edit: &edit
     seed:       [["8", "seed"], ["21", "sampling_mode.seed"]]
     steps:      [["8", "steps"]]
   upsampler:
-    nodes: ["20", "21", "23"]
+    nodes: ["20", "21", "22", "23"]
     prompt_target: ["21", "prompt"]
     consumers: [["5", "text"]]
     prompt_template: "Reference images follow in order (the first image, the second image, ...).\nUser request: {prompt}\nOutput the caption."

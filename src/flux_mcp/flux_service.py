@@ -5,10 +5,13 @@ Business logic shared by the MCP tools: validates requests, fills workflows,
 runs them and stores the results. No MCP imports.
 """
 
+import asyncio
 import io
 import logging
 import random
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from math import sqrt
 from typing import Any, Literal
 
@@ -16,7 +19,7 @@ import httpx
 from PIL import Image, UnidentifiedImageError
 
 from .boxes import Box, layout_rows
-from .comfy_client import ComfyClient, ProgressCallback
+from .comfy_client import ComfyClient, ComfyError, ProgressCallback
 from .config import FluxConfig
 from .images import ID_PATTERN, ImageStore, StoredImage
 from .workflows import Workflow
@@ -40,6 +43,9 @@ class GenerationResult:
     seed: int | None
     width: int
     height: int
+    # The full caption the prompt upsampler wrote, when it ran
+    caption: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class FluxService:
@@ -64,6 +70,11 @@ class FluxService:
         self.workflows = workflows
         self.store = store
         self.downloader = downloader
+        # Idle unloading: models count as loaded after a job until unload_models() runs
+        self._active_jobs = 0
+        self._models_loaded = False
+        self._unload_task: asyncio.Task | None = None
+        self._unload_at: float | None = None
 
     async def generate(
         self,
@@ -93,8 +104,10 @@ class FluxService:
             steps=self._check_steps(steps),
             boxes=layout_rows(boxes) if boxes else None,
         )
-        images = await self._run(graph, on_progress)
-        return GenerationResult(images, seed, width, height)
+        return await self._run(graph, on_progress, {
+            "tool": "generate_image", "prompt": prompt, "seed": seed, "quality": quality,
+            "width": width, "height": height, "boxes": layout_rows(boxes) if boxes else None,
+        })
 
     async def edit(
         self,
@@ -145,8 +158,11 @@ class FluxService:
             steps=self._check_steps(steps),
             boxes=layout_rows(boxes) if boxes else None,
         )
-        images = await self._run(graph, on_progress)
-        return GenerationResult(images, seed, width, height)
+        return await self._run(graph, on_progress, {
+            "tool": "edit_image", "prompt": prompt, "seed": seed, "quality": quality,
+            "width": width, "height": height, "inputs": images,
+            "boxes": layout_rows(boxes) if boxes else None,
+        })
 
     async def upscale(
         self, image: str, factor: int = 2, on_progress: ProgressCallback | None = None
@@ -162,23 +178,70 @@ class FluxService:
                 f"A {width}x{height} image upscaled {factor}x would exceed {limit} px; "
                 f"use factor 2 or a smaller image"
             )
-        return await self._process_one("upscale", data, on_progress, scale=factor / 4)
+        return await self._process_one(
+            "upscale", data, on_progress, {"tool": "upscale_image", "inputs": [image],
+                                           "factor": factor},
+            scale=factor / 4,
+        )
 
     async def remove_background(
         self, image: str, on_progress: ProgressCallback | None = None
     ) -> GenerationResult:
         """Cut out the main subject onto a transparent background"""
-        return await self._process_one("remove_background", await self.load_input(image),
-                                       on_progress)
+        return await self._process_one(
+            "remove_background", await self.load_input(image), on_progress,
+            {"tool": "remove_background", "inputs": [image]},
+        )
+
+    async def get_image(self, image: str | None = None) -> tuple[StoredImage, dict[str, Any]]:
+        """
+        A stored image and its metadata; the most recent one when ``image`` is None
+
+        Raises:
+            ValueError: Unknown or malformed id, or no images yet
+        """
+        if image is None:
+            stored = self.store.latest()
+            if stored is None:
+                raise ValueError("No images have been stored yet")
+        else:
+            image_id = self._own_image_id(image)
+            stored = self.store.get(image_id) if image_id else None
+            if stored is None:
+                raise ValueError(f"No image {image!r} on this server")
+        return stored, self.store.metadata(stored)
+
+    async def unload_models(self) -> None:
+        """Ask ComfyUI to free all model memory now (models reload on the next request)"""
+        self._cancel_unload()
+        await self.comfy.free()
+        self._models_loaded = False
+        logger.info("Asked ComfyUI to unload models")
+
+    def memory_status(self) -> dict[str, Any]:
+        """Whether flux-mcp has left models loaded, and when the idle unload fires"""
+        remaining = None
+        if self._unload_at is not None:
+            remaining = max(0, round(self._unload_at - time.monotonic()))
+        return {
+            "models_loaded": self._models_loaded,
+            "idle_unload_after_s": self.config.idle_unload_s or None,
+            "idle_unload_in_s": remaining,
+            "jobs_running": self._active_jobs,
+        }
 
     async def _process_one(
-        self, workflow: str, data: bytes, on_progress: ProgressCallback | None, **values: Any
+        self,
+        workflow: str,
+        data: bytes,
+        on_progress: ProgressCallback | None,
+        metadata: dict[str, Any],
+        **values: Any,
     ) -> GenerationResult:
         """Run a single-image workflow (no prompt, no seed)"""
         name = await self.comfy.upload(data, f"flux-mcp-{random.getrandbits(64):016x}.png")
         graph = self.workflows[workflow].fill("", enhance_prompt=False, image=name, **values)
-        images = await self._run(graph, on_progress)
-        return GenerationResult(images, seed=None, width=images[0].width, height=images[0].height)
+        return await self._run(graph, on_progress, metadata)
 
     async def load_input(self, image: str) -> bytes:
         """
@@ -187,16 +250,14 @@ class FluxService:
         Raises:
             ValueError: Unknown id, unsupported URL, too large, or not an image
         """
-        image = image.strip()
-        own_prefix = f"{self.store.public_base_url}/images/"
-        if image.startswith(own_prefix):
-            image = image[len(own_prefix):].removesuffix(".png")
-
-        if ID_PATTERN.match(image):
-            path = self.store.path_for(image)
+        image_id = self._own_image_id(image)
+        if image_id:
+            path = self.store.path_for(image_id)
             if path is None:
-                raise ValueError(f"No image with id {image} on this server")
+                raise ValueError(f"No image with id {image_id} on this server")
             return path.read_bytes()
+
+        image = image.strip()
 
         if not image.startswith(("http://", "https://")):
             raise ValueError("image must be an image id returned by this server or an http(s) URL")
@@ -220,10 +281,63 @@ class FluxService:
         except httpx.HTTPError as e:
             raise ValueError(f"Could not fetch {url}: {e}") from e
 
-    async def _run(self, graph: dict[str, Any], on_progress: ProgressCallback | None) -> list[StoredImage]:
-        prompt_id = await self.comfy.submit(graph)
-        outputs = await self.comfy.wait(prompt_id, self.config.timeout_s, on_progress)
-        return [self.store.save(await self.comfy.fetch(o)) for o in outputs]
+    def _own_image_id(self, image: str) -> str | None:
+        """The id in an image id or one of this server's image URLs, else None"""
+        image = image.strip()
+        own_prefix = f"{self.store.public_base_url}/images/"
+        if image.startswith(own_prefix):
+            image = image[len(own_prefix):].removesuffix(".png")
+        return image if ID_PATTERN.match(image) else None
+
+    async def _run(
+        self,
+        graph: dict[str, Any],
+        on_progress: ProgressCallback | None,
+        metadata: dict[str, Any],
+    ) -> GenerationResult:
+        """Submit a graph, wait for it, and store its images with metadata"""
+        self._active_jobs += 1
+        self._cancel_unload()
+        try:
+            prompt_id = await self.comfy.submit(graph)
+            output = await self.comfy.wait(prompt_id, self.config.timeout_s, on_progress)
+            self._models_loaded = True
+            caption = output.texts[0].strip() if output.texts else None
+            metadata = {k: v for k, v in metadata.items() if v is not None}
+            metadata.update(_graph_settings(graph))
+            if caption:
+                metadata["caption"] = caption
+            metadata["created"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            images = [self.store.save(await self.comfy.fetch(o), metadata) for o in output.images]
+        finally:
+            self._active_jobs -= 1
+            if self._active_jobs == 0:
+                self._schedule_unload()
+        return GenerationResult(
+            images, metadata.get("seed"), images[0].width, images[0].height, caption, metadata
+        )
+
+    def _schedule_unload(self) -> None:
+        delay = self.config.idle_unload_s
+        if delay <= 0 or not self._models_loaded:
+            return
+        self._unload_at = time.monotonic() + delay
+        self._unload_task = asyncio.create_task(self._unload_when_idle(delay))
+
+    def _cancel_unload(self) -> None:
+        if self._unload_task is not None:
+            self._unload_task.cancel()
+        self._unload_task = None
+        self._unload_at = None
+
+    async def _unload_when_idle(self, delay: float) -> None:
+        await asyncio.sleep(delay)
+        self._unload_task = None  # so unload_models() doesn't cancel this task
+        try:
+            await self.unload_models()
+            logger.info(f"Unloaded models after {delay:.0f} s idle")
+        except ComfyError as e:
+            logger.warning(f"Idle unload failed: {e}")
 
     def _workflow(self, name: str, quality: Quality):
         if quality not in QUALITY_SUFFIX:
@@ -260,6 +374,19 @@ class FluxService:
         if not 0 <= seed <= MAX_SEED:
             raise ValueError(f"seed must be between 0 and {MAX_SEED}")
         return seed
+
+
+def _graph_settings(graph: dict[str, Any]) -> dict[str, Any]:
+    """Model and sampler settings worth recording, read from the filled graph"""
+    settings = {}
+    for node in graph.values():
+        inputs = node.get("inputs", {})
+        if node.get("class_type") == "UNETLoader":
+            settings["model"] = inputs.get("unet_name")
+        elif node.get("class_type") == "KSampler":
+            settings["steps"] = inputs.get("steps")
+            settings["cfg"] = inputs.get("cfg")
+    return settings
 
 
 def _round(value: int) -> int:

@@ -32,6 +32,13 @@ class OutputImage:
     type: str
 
 
+@dataclass(frozen=True)
+class JobOutput:
+    """What a finished prompt produced: saved images and text from text-output nodes"""
+    images: list[OutputImage]
+    texts: list[str]
+
+
 class ComfyClient:
     """
     Thin wrapper over ComfyUI's /prompt, /history, /view, /upload/image, /queue
@@ -73,9 +80,9 @@ class ComfyClient:
         prompt_id: str,
         timeout: float,
         on_progress: ProgressCallback | None = None,
-    ) -> list[OutputImage]:
+    ) -> JobOutput:
         """
-        Wait for a queued prompt to finish and return the images it saved
+        Wait for a queued prompt to finish and return what it produced
 
         Raises:
             ComfyError: The prompt failed in ComfyUI
@@ -87,7 +94,7 @@ class ComfyClient:
             elapsed = time.monotonic() - start
             entry = (await self._request("GET", f"/history/{prompt_id}")).json().get(prompt_id)
             if entry is not None:
-                return _images_from_history(prompt_id, entry)
+                return _output_from_history(prompt_id, entry)
             if elapsed > timeout:
                 await self.cancel(prompt_id)
                 raise TimeoutError(f"Image generation did not finish within {timeout:.0f} s")
@@ -148,12 +155,16 @@ class ComfyClient:
             "pending": len(queue.get("queue_pending", [])),
         }
 
+    async def free(self) -> None:
+        """Ask ComfyUI to unload all models and release cached memory (applied when idle)"""
+        await self._request("POST", "/free", json={"unload_models": True, "free_memory": True})
+
     async def models(self, folder: str) -> list[str]:
         """Model files ComfyUI sees in a folder such as ``diffusion_models``"""
         return (await self._request("GET", f"/models/{folder}")).json()
 
 
-def _images_from_history(prompt_id: str, entry: dict[str, Any]) -> list[OutputImage]:
+def _output_from_history(prompt_id: str, entry: dict[str, Any]) -> JobOutput:
     status = entry.get("status", {})
     if status.get("status_str") == "error":
         raise ComfyError(f"ComfyUI failed on prompt {prompt_id}: {_execution_error(status)}")
@@ -165,7 +176,13 @@ def _images_from_history(prompt_id: str, entry: dict[str, Any]) -> list[OutputIm
     ]
     if not images:
         raise ComfyError(f"ComfyUI finished prompt {prompt_id} without saving an image")
-    return images
+    texts = [
+        text
+        for node_output in entry.get("outputs", {}).values()
+        for text in node_output.get("text", [])
+        if isinstance(text, str)
+    ]
+    return JobOutput(images, texts)
 
 
 def _execution_error(status: dict[str, Any]) -> str:

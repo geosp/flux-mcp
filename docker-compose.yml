@@ -31,6 +31,7 @@ services:
       FLUX_COMFYUI_URL: http://comfyui:8188
       FLUX_MCP_TOKEN: ${FLUX_MCP_TOKEN:?set FLUX_MCP_TOKEN in .env}
       FLUX_PUBLIC_BASE_URL: ${FLUX_PUBLIC_BASE_URL:-http://10.0.0.96:8300}
+      FLUX_IDLE_UNLOAD_S: ${FLUX_IDLE_UNLOAD_S:-600}
     ports:
       - "${FLUX_MCP_PORT:-8300}:8300"
     volumes:

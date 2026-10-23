@@ -205,6 +205,18 @@
       ]
     }
   },
+  "22": {
+    "class_type": "PreviewAny",
+    "_meta": {
+      "title": "Upsampled caption (returned to the client)"
+    },
+    "inputs": {
+      "source": [
+        "21",
+        0
+      ]
+    }
+  },
   "23": {
     "class_type": "BatchImagesNode",
     "_meta": {
