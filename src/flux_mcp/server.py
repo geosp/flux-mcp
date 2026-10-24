@@ -31,10 +31,11 @@ This server generates and edits images with FLUX 3 Image Klein.
   y_max, x_max] on a 0-1000 grid, (0,0) top left, "desc": "...", "text": "..."}. Use them when
   the user cares where things go, or to point at a region of an image to edit (boxes are named
   obj_1, obj_2, ... in order; e.g. prompt "remove obj_1").
-- To use the user's own image, upload it first and pass the returned id. With a shell:
-  curl -H "Authorization: Bearer $FLUX_MCP_TOKEN" -F file=@photo.jpg <server>/upload
-  (returns JSON with "id"). Without a shell, ask the user to open <server>/upload in a browser,
-  upload the image there and give you the id. Images pasted into the chat cannot be passed on.
+- To use the user's own image, or one on your shell's filesystem, call create_upload_link. Give
+  the link to the user to open in a browser, or upload yourself with the curl command it shows
+  (no token needed). Then call check_upload(upload_id, wait_s=60) and pass the returned ids on.
+  Images pasted into the chat cannot be passed on; send the user a link instead. Never ask the
+  user for the server's token.
 - Each result includes a small JPEG preview plus a URL to the full-resolution PNG. Give the
   user the URL; quote the seed if they may want to reproduce the image.
 - Results also include the caption the prompt upsampler wrote; show it when the user wants to

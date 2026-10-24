@@ -24,6 +24,8 @@ CLI and configuration.
 | `unload_models()` | Free the models' GPU memory now; they reload on the next request |
 | `list_models()` | Workflows and the model files ComfyUI sees |
 | `server_status()` | ComfyUI version, queue length, free memory, whether models are loaded and when they will be unloaded |
+| `create_upload_link(max_files=5)` | A short-lived, upload-only link for getting the user's images (or files on the agent's shell) onto the server; HTTP only |
+| `check_upload(upload_id, wait_s=0)` | The image ids, file names and sizes uploaded through a link; `wait_s` (≤ 120) waits for the first one |
 
 Each image result contains a text block with the seed and full-resolution URL
 (`<FLUX_PUBLIC_BASE_URL>/images/<id>.png`), one JPEG preview (longest side ≤ 1024 px) per image,
@@ -63,18 +65,28 @@ your caption, as ComfyUI's `Flux3LayoutPrompt` does.
 
 ## Uploading your own images
 
-Tools take image ids, so upload an image first and use the returned id:
+Tools take image ids. To use an image that isn't already at an http(s) URL, the model asks for an
+**upload link**; nobody outside the MCP client ever needs `FLUX_MCP_TOKEN`:
 
-```bash
-curl -H "Authorization: Bearer $FLUX_MCP_TOKEN" -F file=@photo.jpg http://10.0.0.96:8300/upload
-# {"id": "1329da32…", "url": "http://10.0.0.96:8300/images/1329da32….png", "width": 1776, "height": 1184}
-```
+1. The model calls `create_upload_link` and gets `http://<host>:8300/upload/<random token>` plus an
+   `upload_id`.
+2. Either the user opens the link in a browser and drops the images, or an agent with a shell
+   (Claude Code, Cline, opencode) uploads them itself:
+   ```bash
+   curl -F file=@photo.jpg -F file=@style.png http://10.0.0.96:8300/upload/<token>
+   # {"files": [{"filename": "photo.jpg", "size": 482113}, {"filename": "style.png", "size": 90210}], "remaining": 3}
+   ```
+3. The model calls `check_upload(upload_id, wait_s=60)`, gets the image ids and passes them to
+   `edit_image`, `upscale_image` or `remove_background`.
 
-Agents with a shell (Claude Code, Cline, opencode) can run this themselves; the server's
-instructions tell them how. In a browser, open `http://10.0.0.96:8300/upload`, paste the token,
-and drop images to get their ids. Images pasted into a chat cannot be forwarded to a tool: the
-model only receives them, it cannot hand the bytes on. Uploads are limited to
-`FLUX_MAX_INPUT_BYTES` (20 MB) and stored as PNG.
+A link works for `FLUX_UPLOAD_LINK_TTL_S` (10 min) and up to `max_files` images, and does
+nothing but accept uploads. Its response never contains image ids: only the MCP caller gets
+those, through `upload_id`. So a link that shows up in a transcript is harmless once it is used
+up or expired. Links live in memory, and restarting the server closes them all. Each image is limited to
+`FLUX_MAX_INPUT_BYTES` (20 MB), must be readable by Pillow, and is stored as PNG with its
+original file name in the metadata. If any file in a POST is rejected, none of them are stored.
+Images pasted into a chat cannot be forwarded to a tool, because the model only receives them and
+cannot hand the bytes on. In that case the model sends the user a link instead.
 
 ## Models
 
@@ -143,7 +155,8 @@ docker compose logs -f flux-mcp
 
 The ComfyUI web UI is at `http://<host>:8188`, the MCP endpoint at `http://<host>:8300/mcp`.
 Both are meant for the LAN only: ComfyUI has no authentication, and image URLs are protected
-only by their random ids.
+only by their random ids. `FLUX_MCP_TOKEN` belongs in MCP client configs only. Uploads use
+short-lived links (see above), so never put the token in a shell or give it to users.
 
 Configuration (environment or `.env`):
 
@@ -155,6 +168,9 @@ Configuration (environment or `.env`):
 | `FLUX_OUTPUT_DIR` | `data/images` | |
 | `FLUX_IDLE_UNLOAD_S` | `600` | unload ComfyUI's models after this many idle seconds, freeing memory for other GPU users such as vLLM (`0` = never). The next call then reloads them (~25 s from page cache, or minutes after a ComfyUI restart) |
 | `FLUX_WORKFLOWS_DIR` | `workflows` | |
+| `FLUX_UPLOAD_LINK_TTL_S` | `600` | how long an upload link stays open |
+| `FLUX_UPLOAD_LINK_MAX_FILES` | `10` | most images one link may accept |
+| `FLUX_UPLOAD_LINK_MAX_ACTIVE` | `100` | most upload links open at once |
 | `FLUX_MAX_SIDE`, `FLUX_MIN_SIDE`, `FLUX_MAX_COUNT`, `FLUX_MAX_PROMPT_CHARS`, `FLUX_MAX_INPUT_BYTES`, `FLUX_TIMEOUT_S`, `FLUX_PREVIEW_MAX_SIDE` | see `config.py` | limits |
 | `MCP_PORT`, `MCP_HOST` | `3000`, `0.0.0.0` | from mcp-service-kit (the image sets `MCP_PORT=8300`) |
 

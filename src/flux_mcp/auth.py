@@ -1,5 +1,5 @@
 """
-Static bearer-token checks, shared by the MCP endpoint and the upload route
+Static bearer-token check for the MCP endpoint
 """
 
 import hmac
@@ -10,12 +10,6 @@ from pydantic import SecretStr
 
 def token_matches(expected: SecretStr, given: str) -> bool:
     return hmac.compare_digest(given.encode(), expected.get_secret_value().encode())
-
-
-def bearer_token(authorization: str | None) -> str | None:
-    """The token from an ``Authorization: Bearer <token>`` header value"""
-    scheme, _, token = (authorization or "").partition(" ")
-    return token.strip() if scheme.lower() == "bearer" and token.strip() else None
 
 
 class BearerTokenVerifier(TokenVerifier):

@@ -1,3 +1,5 @@
+import contextlib
+
 import httpx
 import pytest
 from fastmcp import Client
@@ -31,7 +33,8 @@ async def test_tools_and_instructions(server):
     async with Client(server.create_mcp_app()) as client:
         names = {t.name for t in await client.list_tools()}
         assert names == {"generate_image", "edit_image", "upscale_image", "remove_background",
-                         "get_image", "unload_models", "list_models", "server_status"}
+                         "get_image", "unload_models", "list_models", "server_status",
+                         "create_upload_link", "check_upload"}
         assert "generate_image" in client.instructions
 
 
@@ -103,59 +106,110 @@ def test_http_without_token_refuses_to_start(app_config, transport):
     make_server(app_config, transport, mode="stdio").validate_configuration()
 
 
-async def upload_client(app_config, transport, **kwargs):
-    server = make_server(app_config, transport, mode="http", token="secret", **kwargs)
+@contextlib.asynccontextmanager
+async def http_server(app_config, transport, **config):
+    """An HTTP-mode server with an MCP client and a plain HTTP client on its ASGI app"""
+    for key, value in config.items():
+        setattr(app_config.flux, key, value)
+    server = make_server(app_config, transport, mode="http", token="secret")
     app = server.create_asgi_app()
-    return server, httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://t")
+    server.service.flux.comfy.poll_interval = 0
+    async with app.router.lifespan_context(app), httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://flux.test:8300"
+    ) as http:
+        yield server, Client(server._mcp_app), http
 
 
-async def test_upload_stores_image(app_config, transport):
-    server, http = await upload_client(app_config, transport)
-    async with http:
-        response = await http.post("/upload", headers={"Authorization": "Bearer secret"},
-                                   files={"file": ("photo.jpg", png(40, 30), "image/jpeg")})
-    assert response.status_code == 200
-    data = response.json()
-    assert (data["width"], data["height"]) == (40, 30)
-    assert data["url"] == f"http://flux.test:8300/images/{data['id']}.png"
-    assert server.service.flux.store.path_for(data["id"]) is not None
+async def test_master_token_upload_route_is_gone(app_config, transport):
+    async with http_server(app_config, transport) as (_, _, http):
+        assert (await http.post("/mcp", json={})).status_code == 401
+        response = await http.post("/upload", files={"file": ("a.png", png(8, 8))},
+                                   headers={"Authorization": "Bearer secret"})
+        assert response.status_code in (404, 405)
+        assert (await http.get("/upload")).status_code in (404, 405)
 
 
-@pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer wrong"},
-                                     {"Authorization": "Basic secret"}])
-async def test_upload_requires_token(app_config, transport, headers):
-    _, http = await upload_client(app_config, transport)
-    async with http:
-        response = await http.post("/upload", headers=headers, files={"file": ("a.png", png(8, 8))})
-    assert response.status_code == 401
+async def test_upload_link_flow(app_config, transport):
+    async with http_server(app_config, transport) as (server, client, http):
+        async with client:
+            link = await client.call_tool("create_upload_link", {"max_files": 2})
+            url = link.structured_content["upload_url"]
+            upload_id = link.structured_content["upload_id"]
+            assert url.startswith("http://flux.test:8300/upload/") and upload_id not in url
+            assert "curl -F file=@" in link.content[0].text
+
+            empty = await client.call_tool("check_upload", {"upload_id": upload_id})
+            assert empty.structured_content == {"files": [], "remaining": 2, "expired": False}
+
+            page = await http.get(url)
+            assert page.status_code == 200 and "Upload reference images" in page.text
+            assert 'name="referrer" content="no-referrer"' in page.text
+            assert "Authorization" not in page.text
+            uploaded = await http.post(url, files=[("file", ("../../fox.jpg", png(40, 30))),
+                                                   ("file", ("bg.png", png(64, 48, "blue")))])
+            assert uploaded.status_code == 200
+            assert uploaded.json() == {"files": [{"filename": "fox.jpg", "size": len(png(40, 30))},
+                                                 {"filename": "bg.png",
+                                                  "size": len(png(64, 48, "blue"))}],
+                                       "remaining": 0}
+
+            # used up: the link no longer works, even for its form
+            assert (await http.post(url, files={"file": ("x.png", png(8, 8))})).status_code == 404
+            assert (await http.get(url)).status_code == 404
+
+            checked = await client.call_tool("check_upload", {"upload_id": upload_id, "wait_s": 5})
+            files = {f["filename"]: f for f in checked.structured_content["files"]}
+            assert set(files) == {"fox.jpg", "bg.png"}
+            assert (files["fox.jpg"]["width"], files["fox.jpg"]["height"]) == (40, 30)
+            assert checked.structured_content["remaining"] == 0
+
+            edited = await client.call_tool("edit_image", {
+                "prompt": "the fox from the first image on the second",
+                "images": [files["fox.jpg"]["id"], files["bg.png"]["id"]]})
+            assert len(edited.structured_content["images"]) == 1
+            shown = await client.call_tool("get_image", {"image": files["fox.jpg"]["id"]})
+            assert shown.structured_content["metadata"]["upload_id"] == upload_id
+
+            image = await http.get(files["bg.png"]["url"].removeprefix("http://flux.test:8300"))
+            assert image.status_code == 200 and image.headers["content-type"] == "image/png"
+        assert (await http.post("/mcp", json={})).status_code == 401
 
 
-async def test_upload_without_auth_when_disabled(app_config, transport):
-    _, http = await upload_client(app_config, transport, auth=False)
-    async with http:
-        response = await http.post("/upload", files={"file": ("a.png", png(8, 8))})
-    assert response.status_code == 200
+async def test_upload_link_limits(app_config, transport):
+    async with http_server(app_config, transport, upload_link_max_files=3,
+                           max_input_bytes=2000) as (server, client, http):
+        store = server.service.flux.store
+        async with client:
+            with pytest.raises(ToolError, match="at most 3"):
+                await client.call_tool("create_upload_link", {"max_files": 4})
+            link = await client.call_tool("create_upload_link", {"max_files": 2})
+            url = link.structured_content["upload_url"]
+
+            too_many = await http.post(url, files=[("file", ("a.png", png(8, 8)))] * 3)
+            assert too_many.status_code == 400
+            # one bad file rejects the whole batch
+            mixed = await http.post(url, files=[("file", ("a.png", png(8, 8))),
+                                                ("file", ("notes.txt", b"hello"))])
+            assert mixed.status_code == 400 and "not a readable image" in mixed.json()["error"]
+            assert store.latest() is None
+            empty = await http.post(url, files={"file": ("a.png", b"")})
+            missing = await http.post(url, files={"other": ("a.png", png(8, 8))})
+            big = await http.post(url, files={"file": ("a.png", png(8, 8) + b"\0" * 5000)})
+            assert (empty.status_code, missing.status_code, big.status_code) == (400, 400, 413)
+            assert (await http.post(url + "x", files={"file": ("a.png", png(8, 8))})).status_code == 404
+
+            server.service.flux.uploads.clock = lambda: float("inf")
+            assert (await http.post(url, files={"file": ("a.png", png(8, 8))})).status_code == 404
+            gone = await http.get(url)
+            assert gone.status_code == 404 and "Ask the assistant for a new one" in gone.text
 
 
-async def test_upload_rejects_bad_files(app_config, transport):
-    app_config.flux.max_input_bytes = 2000
-    _, http = await upload_client(app_config, transport)
-    auth = {"Authorization": "Bearer secret"}
-    async with http:
-        text = await http.post("/upload", headers=auth, files={"file": ("a.txt", b"hello")})
-        missing = await http.post("/upload", headers=auth, files={"other": ("a.png", png(8, 8))})
-        big = await http.post("/upload", headers=auth,
-                              files={"file": ("a.png", png(8, 8) + b"\0" * 5000)})
-    assert text.status_code == 400 and "not a readable image" in text.json()["error"]
-    assert missing.status_code == 400
-    assert big.status_code == 413
-
-
-async def test_upload_page(app_config, transport):
-    _, http = await upload_client(app_config, transport)
-    async with http:
-        page = await http.get("/upload")
-    assert page.status_code == 200 and "Upload a reference image" in page.text
+async def test_upload_link_needs_http(server):
+    async with Client(server.create_mcp_app()) as client:
+        with pytest.raises(ToolError, match="need the HTTP server"):
+            await client.call_tool("create_upload_link", {})
+        with pytest.raises(ToolError, match="Unknown or expired"):
+            await client.call_tool("check_upload", {"upload_id": "0" * 32})
 
 
 async def test_generate_with_boxes(server, fake_comfy):

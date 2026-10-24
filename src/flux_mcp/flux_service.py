@@ -22,6 +22,7 @@ from .boxes import Box, layout_rows
 from .comfy_client import ComfyClient, ComfyError, ProgressCallback
 from .config import FluxConfig
 from .images import ID_PATTERN, ImageStore, StoredImage
+from .uploads import UploadLinks
 from .workflows import Workflow
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,8 @@ class FluxService:
         self.workflows = workflows
         self.store = store
         self.downloader = downloader
+        # Upload links need the HTTP routes, so the service sets this only over HTTP
+        self.uploads: UploadLinks | None = None
         # Idle unloading: models count as loaded after a job until unload_models() runs
         self._active_jobs = 0
         self._models_loaded = False

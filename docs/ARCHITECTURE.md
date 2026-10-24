@@ -23,8 +23,8 @@ flowchart LR
     models[("/mnt/shared/.../comfyui<br/>model files, read-only")]
 
     cc -- "MCP over HTTP<br/>/mcp + bearer token" --> mcp
-    cc -- "POST /upload" --> mcp
-    browser -- "GET /images/{id}.png<br/>GET /upload" --> mcp
+    cc -- "POST /upload/{token}" --> mcp
+    browser -- "GET /images/{id}.png<br/>GET+POST /upload/{token}" --> mcp
     mcp -- "HTTP API<br/>/prompt /history /view /upload/image" --> comfy
     mcp --- vol
     comfy --- models
@@ -74,7 +74,7 @@ flowchart TB
 | Module | Responsibility |
 |---|---|
 | `server.py` | Server metadata, the instructions sent to client LLMs, bearer-token auth for `/mcp`, startup checks, `main()` |
-| `service.py` | Builds everything at startup, registers every `features/*/tool.py`, serves `/images/<id>.png` and `/upload` |
+| `service.py` | Builds everything at startup, registers every `features/*/tool.py`, serves `/images/<id>.png` and, over HTTP, the `/upload/<token>` routes |
 | `features/*/tool.py` | Tool signatures and docstrings (what the client LLM sees). Thin: they call `FluxService` |
 | `results.py` | Maps errors to MCP tool errors, forwards progress, builds the preview + URL result |
 | `flux_service.py` | The real work: limits, seeds, sizes, loading input images, choosing a workflow, running it, storing outputs |
@@ -82,7 +82,8 @@ flowchart TB
 | `comfy_client.py` | `submit`, `wait`, `fetch`, `upload`, `cancel`, `free` against ComfyUI's HTTP API |
 | `images.py` | Saves PNGs under random ids, resolves ids, makes JPEG previews |
 | `boxes.py` | Validates bounding boxes and turns them into the layout rows FLUX 3 expects |
-| `auth.py` | Constant-time token comparison, shared by `/mcp` and `/upload` |
+| `uploads.py` | Short-lived upload links: tokens kept as sha256 hashes, per-link file limits, expiry |
+| `auth.py` | Constant-time bearer-token check for `/mcp` |
 | `config.py` | `FLUX_*` settings (pydantic-settings) and the combined `AppConfig` |
 
 ## One tool call, end to end
@@ -198,7 +199,7 @@ place and is addressed by a random 32-hex-character id.
 ```mermaid
 flowchart LR
     gen["tool results"] --> store
-    upl["POST /upload"] --> store
+    upl["POST /upload/{token}"] --> store
     store[("ImageStore<br/>/data/images/{id}.png")]
     store --> url["GET /images/{id}.png<br/>full resolution"]
     store --> prev["JPEG preview ≤ 1024 px<br/>inline in the tool result"]
@@ -217,7 +218,7 @@ flowchart LR
 - Tool inputs accept an id, this server's own image URL, or any http(s) URL (downloaded,
   size-capped, checked to be an image).
 - Images pasted into a chat can't reach a tool, because the model can't forward the bytes.
-  That's why `/upload` exists.
+  That's why upload links exist (see below).
 
 ## Model memory
 
@@ -243,16 +244,50 @@ queue is idle. The timer only starts when no job is running, and each new job ca
 flowchart TD
     req(["HTTP request"]) --> path{"path"}
     path -- "/mcp" --> fv["FastMCP auth<br/>BearerTokenVerifier"]
-    path -- "POST /upload" --> own["route checks the bearer token itself<br/>(FastMCP auth doesn't cover custom routes)"]
-    path -- "GET /images/{id}.png<br/>GET /upload (form page)" --> open["no token<br/>ids are unguessable; the form sends the token on submit"]
-    fv & own --> ok{"token matches<br/>FLUX_MCP_TOKEN?"}
+    fv --> ok{"token matches<br/>FLUX_MCP_TOKEN?"}
     ok -- no --> deny["401"]
     ok -- yes --> allow["handled"]
+    path -- "GET/POST /upload/{token}" --> link{"link token known,<br/>open and not used up?"}
+    link -- no --> gone["404"]
+    link -- yes --> store["form page / store images"]
+    path -- "GET /images/{id}.png" --> open["no token<br/>ids are unguessable"]
 ```
 
-- One shared token, `FLUX_MCP_TOKEN`, compared in constant time (`auth.py`).
+- One shared token, `FLUX_MCP_TOKEN`, compared in constant time (`auth.py`). It is only ever
+  needed by MCP clients. FastMCP's auth covers `/mcp` only, so the custom routes must not accept
+  anything the token would.
 - HTTP refuses to start without a token unless `--no-auth` is passed. stdio needs no token.
 - ComfyUI itself has no authentication. Keep port 8188 on a trusted network.
+
+### Upload links
+
+```mermaid
+sequenceDiagram
+    participant M as Model (MCP client)
+    participant S as flux-mcp
+    participant U as User's browser or agent shell
+
+    M->>S: create_upload_link(max_files) over /mcp + bearer token
+    S-->>M: /upload/{token}, upload_id
+    M->>U: link (or runs curl itself)
+    U->>S: POST /upload/{token} (multipart "file" fields, no Authorization)
+    S-->>U: {files: [{filename, size}], remaining}
+    M->>S: check_upload(upload_id, wait_s)
+    S-->>M: image ids, then used in edit_image etc.
+```
+
+- The link is the credential, and it can only add images. It is not tied to the MCP session,
+  because on newer MCP protocol versions FastMCP's session id changes with every request.
+- The token is `secrets.token_urlsafe(32)`, kept only as a sha256 hash, in memory. A restart
+  closes every link.
+- A link closes after `FLUX_UPLOAD_LINK_TTL_S` or once it has taken its `max_files` images.
+  Unknown, expired and used-up tokens all get the same 404. The grant stays readable by
+  `upload_id` for 24 h, so `check_upload` still works after the link closes.
+- The upload response holds only file names and sizes. Image ids go to the MCP caller alone, so
+  a link that leaks into a transcript can't be used to read anything.
+- The form page has no token field, posts to its own path, and sends no referrer.
+- Files are size-checked (Content-Length, then per file), decoded with Pillow, and stored only
+  when every file in the POST is valid. File names are reduced to a safe base name.
 
 ## Startup
 
@@ -271,7 +306,7 @@ sequenceDiagram
     Note right of Svc: load workflows (fails fast on a bad nodes.yaml),<br/>create the image store and HTTP clients
     K->>Srv: create_mcp_app()
     Srv->>Svc: register_mcp_tools(mcp)
-    Note right of Svc: import features/*/tool.py,<br/>add /images and /upload routes
+    Note right of Svc: import features/*/tool.py,<br/>add /images and (HTTP) /upload/{token} routes
     K->>K: serve stdio or HTTP
 ```
 
@@ -299,7 +334,8 @@ queued, then running, then done, and returns images of the size the graph asked 
 | `test_boxes.py` | Box validation, layout rows, box-aware upsampler templates |
 | `test_comfy_client.py` | Submit / poll / fetch, execution errors, timeouts and cancel |
 | `test_flux_service.py` | Limits, sizes, input loading (ids, URLs, oversized, non-images), each tool's logic |
-| `test_server.py` | Real MCP calls through an in-memory `fastmcp.Client`, `/images`, `/upload`, auth |
+| `test_uploads.py` | Upload-link registry with a fake clock: hashing, limits, expiry, retention; file name cleaning |
+| `test_server.py` | Real MCP calls through an in-memory `fastmcp.Client`, `/images`, the upload-link flow and limits over HTTP (ASGI), auth |
 
 The real workflows are only proven against a running ComfyUI. After changing a graph, run one
 call of each affected tool against the stack (the README has the steps).

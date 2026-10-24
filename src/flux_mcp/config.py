@@ -58,7 +58,22 @@ class FluxConfig(BaseSettings):
     )
     max_input_bytes: int = Field(
         default=20 * 1024 * 1024,
-        description="Largest input image accepted by edit_image"
+        description="Largest input image accepted by edit_image or an upload link"
+    )
+    upload_link_ttl_s: float = Field(
+        default=600.0,
+        gt=0,
+        description="How long an upload link from create_upload_link stays open"
+    )
+    upload_link_max_files: int = Field(
+        default=10,
+        ge=1,
+        description="Most files one upload link may accept"
+    )
+    upload_link_max_active: int = Field(
+        default=100,
+        ge=1,
+        description="Most upload links open at once"
     )
     idle_unload_s: float = Field(
         default=600.0,
