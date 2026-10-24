@@ -33,7 +33,7 @@
     },
     "inputs": {
       "model": [
-        "1",
+        "18",
         0
       ],
       "max_shift": 2.772588722239781,
@@ -114,7 +114,7 @@
         0
       ],
       "vae": [
-        "3",
+        "19",
         0
       ]
     }
@@ -127,6 +127,32 @@
         0
       ],
       "filename_prefix": "flux-mcp/t2i"
+    }
+  },
+  "18": {
+    "class_type": "SelectModelDevice",
+    "_meta": {
+      "title": "Diffusion model device"
+    },
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "device": "gpu:1"
+    }
+  },
+  "19": {
+    "class_type": "SelectVAEDevice",
+    "_meta": {
+      "title": "VAE device"
+    },
+    "inputs": {
+      "vae": [
+        "3",
+        0
+      ],
+      "device": "gpu:1"
     }
   },
   "20": {

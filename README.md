@@ -172,7 +172,21 @@ Configuration (environment or `.env`):
 | `FLUX_UPLOAD_LINK_MAX_FILES` | `10` | most images one link may accept |
 | `FLUX_UPLOAD_LINK_MAX_ACTIVE` | `100` | most upload links open at once |
 | `FLUX_MAX_SIDE`, `FLUX_MIN_SIDE`, `FLUX_MAX_COUNT`, `FLUX_MAX_PROMPT_CHARS`, `FLUX_MAX_INPUT_BYTES`, `FLUX_TIMEOUT_S`, `FLUX_PREVIEW_MAX_SIDE` | see `config.py` | limits |
+| `COMFYUI_EXTRA_ARGS` | — | extra ComfyUI flags (compose only), e.g. `--default-device 1` on a two-GPU machine (see below) |
 | `MCP_PORT`, `MCP_HOST` | `3000`, `0.0.0.0` | from mcp-service-kit (the image sets `MCP_PORT=8300`) |
+
+### Two GPUs
+
+ComfyUI puts every model on one GPU unless told otherwise. The FLUX workflows send the diffusion
+model and VAE to `gpu:1` (nodes 18 and 19, `SelectModelDevice`/`SelectVAEDevice`). The text
+encoder and prompt upsampler stay on ComfyUI's default device: on any other GPU, text generation
+runs about 100 times slower. With `COMFYUI_EXTRA_ARGS=--default-device 1`, ComfyUI makes physical
+GPU 1 its default and renumbers the GPUs, so the text models (~15.6 GB) land on GPU 1 and the
+diffusion model and VAE on GPU 0. On a single-GPU machine, leave the variable unset; the device
+nodes then pass through unchanged.
+
+Measured on 2× RTX 3090 Ti, 1024×1024: `generate_image` with the upsampler takes ~13 s (~23 s
+with everything on one GPU); upsampler ~100 tokens/s; `quality="high"` ~67 s.
 
 ### Without Docker (server only)
 

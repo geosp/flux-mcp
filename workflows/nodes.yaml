@@ -11,6 +11,12 @@
 # upsampler: the prompt-upsampler nodes. With enhance_prompt on, the request is formatted
 # with prompt_template into prompt_target and the upsampler's output feeds the text encoder.
 # With it off, the nodes are removed and each consumer gets the raw prompt.
+#
+# GPUs: nodes 18 (SelectModelDevice) and 19 (SelectVAEDevice) put the diffusion model and VAE on
+# gpu:1, while the text encoder and upsampler stay on ComfyUI's default device. Text generation
+# must stay there: on a non-default GPU the upsampler runs ~100x slower. On a single-GPU machine
+# ComfyUI passes the nodes through unchanged. With COMFYUI_EXTRA_ARGS="--default-device 1",
+# ComfyUI renumbers the GPUs, so gpu:1 is then physical GPU 0.
 
 t2i: &t2i
   file: flux3_klein_t2i.json

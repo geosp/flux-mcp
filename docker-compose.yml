@@ -2,6 +2,7 @@ services:
   comfyui:
     build: ./comfyui
     image: flux-mcp-comfyui:v0.42.1
+    command: python main.py --listen 0.0.0.0 --port 8188 ${COMFYUI_EXTRA_ARGS:-}
     runtime: nvidia
     environment:
       NVIDIA_VISIBLE_DEVICES: all
